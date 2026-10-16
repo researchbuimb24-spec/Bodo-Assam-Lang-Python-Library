@@ -109,6 +109,12 @@ python -m bhasha_lib.culture data/archive/bodo/culture --db data/lexicon.sqlite
 
 # Import bibliography sources from CSV
 python -m bhasha_lib.sources_import sources.csv --db data/lexicon.sqlite
+
+# Manage lexical meanings & community annotation
+python -m bhasha_lib.meanings stats --db data/lexicon.sqlite
+python -m bhasha_lib.meanings export unannotated.csv --min-freq 2 --limit 500 --db data/lexicon.sqlite
+python -m bhasha_lib.meanings import completed_meanings.csv --db data/lexicon.sqlite
+python -m bhasha_lib.meanings bootstrap --db data/lexicon.sqlite
 ```
 
 ---
@@ -147,6 +153,7 @@ bhasha-lib/
 │       │   ├── __init__.py
 │       │   ├── aksharantar.py         # AI4Bharat Aksharantar zip loader
 │       │   └── archive_org.py         # Archive.org historical books loader
+│       ├── meanings.py                # Lexical meanings export/import & seed vocabulary
 │       ├── resources/
 │       │   └── english_words.txt      # Curated English vocabulary list
 │       ├── py.typed                   # PEP 561 type annotation marker

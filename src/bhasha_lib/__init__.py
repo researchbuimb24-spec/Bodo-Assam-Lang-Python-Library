@@ -25,6 +25,7 @@ from bhasha_lib.db import (
     add_word,
     init_db,
     search_word,
+    update_word_meaning,
 )
 from bhasha_lib.english import BODO_PROTECTED_WORDS, is_english_word
 from bhasha_lib.tokenizer import normalize, tokenize, tokenize_roman
@@ -65,6 +66,22 @@ def __getattr__(name: str) -> Any:
         from bhasha_lib.loaders.archive_org import load_historical_book
 
         return load_historical_book
+    if name == "export_meanings_csv":
+        from bhasha_lib.meanings import export_meanings_csv
+
+        return export_meanings_csv
+    if name == "import_meanings_csv":
+        from bhasha_lib.meanings import import_meanings_csv
+
+        return import_meanings_csv
+    if name == "bootstrap_seed_meanings":
+        from bhasha_lib.meanings import bootstrap_seed_meanings
+
+        return bootstrap_seed_meanings
+    if name == "get_meanings_stats":
+        from bhasha_lib.meanings import get_meanings_stats
+
+        return get_meanings_stats
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -78,13 +95,17 @@ __all__ = [
     "add_occurrence",
     "add_source",
     "add_word",
+    "bootstrap_seed_meanings",
     "calculate_coverage",
+    "export_meanings_csv",
     "extract_file",
     "filter_devanagari",
     "find_default_config",
     "get_archive_base_dir",
     "get_archive_path",
     "get_bodo_config",
+    "get_meanings_stats",
+    "import_meanings_csv",
     "import_sources_csv",
     "init_db",
     "is_char_in_range",
@@ -101,5 +122,6 @@ __all__ = [
     "search_word",
     "tokenize",
     "tokenize_roman",
+    "update_word_meaning",
     "verify_archive_structure",
 ]

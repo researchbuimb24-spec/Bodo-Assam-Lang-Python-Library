@@ -187,6 +187,54 @@ def add_word(
         )
 
 
+def update_word_meaning(
+    word: str,
+    meaning_hi: str | None = None,
+    meaning_en: str | None = None,
+    roman: str | None = None,
+    pos: str | None = None,
+    tone: str | None = None,
+    dialect: str | None = None,
+    db_path: str | Path = DEFAULT_DB_PATH,
+) -> bool:
+    """Update meaning, POS, tone, or romanization of an existing word.
+
+    Does not modify the word's frequency counter.
+
+    Returns:
+        True if the word was found and updated, False otherwise.
+    """
+    if not word or not str(word).strip():
+        raise ValueError("Word cannot be empty.")
+
+    normalized_word = unicodedata.normalize("NFC", str(word).strip())
+
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE words SET
+                meaning_hi = COALESCE(?, meaning_hi),
+                meaning_en = COALESCE(?, meaning_en),
+                roman = COALESCE(?, roman),
+                pos = COALESCE(?, pos),
+                tone = COALESCE(?, tone),
+                dialect = COALESCE(?, dialect)
+            WHERE word = ?
+            """,
+            (
+                meaning_hi if meaning_hi and meaning_hi.strip() else None,
+                meaning_en if meaning_en and meaning_en.strip() else None,
+                roman if roman and roman.strip() else None,
+                pos if pos and pos.strip() else None,
+                tone if tone and tone.strip() else None,
+                dialect if dialect and dialect.strip() else None,
+                normalized_word,
+            ),
+        )
+        return cursor.rowcount > 0
+
+
 def add_occurrence(
     word: str,
     source_id: int | None = None,
