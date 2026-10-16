@@ -217,3 +217,71 @@ def test_extract_cli_latin_script(tmp_path):
 
     w = search_word("boro", db_path=db_file)
     assert w is not None
+
+
+def test_extract_latin_mark_english(tmp_path):
+    """Verify English words are tagged with dialect='english'.
+
+    Bodo words must not be tagged with dialect='english'.
+    """
+    txt_file = tmp_path / "bilingual.txt"
+    txt_file.write_text(
+        "Rev Endle wrote Boro grammar in Assam with gaham words.\n", encoding="utf-8"
+    )
+
+    db_file = tmp_path / "bilingual_marked.sqlite"
+    init_db(db_file)
+    source_id = add_source(title="Endle 1884", license="public_domain", db_path=db_file)
+
+    freqs = extract_file(
+        path=txt_file,
+        db_path=db_file,
+        source_id=source_id,
+        license="public_domain",
+        script="latin",
+        mark_english=True,
+        filter_english=False,
+    )
+
+    assert "grammar" in freqs
+    assert "gaham" in freqs
+    assert "boro" in freqs
+
+    w_eng = search_word("grammar", db_path=db_file)
+    assert w_eng is not None
+    assert w_eng["dialect"] == "english"
+
+    w_bodo = search_word("gaham", db_path=db_file)
+    assert w_bodo is not None
+    assert w_bodo["dialect"] is None or w_bodo["dialect"] != "english"
+
+
+def test_extract_latin_filter_english(tmp_path):
+    """Verify --filter-english completely excludes English words from DB."""
+    txt_file = tmp_path / "bilingual_filter.txt"
+    txt_file.write_text(
+        "Rev Endle wrote Boro grammar in Assam with gaham words.\n", encoding="utf-8"
+    )
+
+    db_file = tmp_path / "bilingual_filtered.sqlite"
+    init_db(db_file)
+    source_id = add_source(
+        title="Endle 1884 Filtered", license="public_domain", db_path=db_file
+    )
+
+    freqs = extract_file(
+        path=txt_file,
+        db_path=db_file,
+        source_id=source_id,
+        license="public_domain",
+        script="latin",
+        filter_english=True,
+    )
+
+    # "grammar", "wrote", "words" are English and should be filtered
+    assert "grammar" not in freqs
+    assert search_word("grammar", db_path=db_file) is None
+
+    # Bodo words should be kept
+    assert "gaham" in freqs
+    assert search_word("gaham", db_path=db_file) is not None

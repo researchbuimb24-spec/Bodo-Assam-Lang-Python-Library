@@ -26,6 +26,7 @@ from bhasha_lib.db import (
     init_db,
     search_word,
 )
+from bhasha_lib.english import BODO_PROTECTED_WORDS, is_english_word
 from bhasha_lib.tokenizer import normalize, tokenize, tokenize_roman
 from bhasha_lib.unicode import (
     calculate_coverage,
@@ -60,11 +61,16 @@ def __getattr__(name: str) -> Any:
         from bhasha_lib.sources_import import import_sources_csv
 
         return import_sources_csv
+    if name == "load_historical_book":
+        from bhasha_lib.loaders.archive_org import load_historical_book
+
+        return load_historical_book
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 __all__ = [
     "ARCHIVE_CATEGORIES",
+    "BODO_PROTECTED_WORDS",
     "DEFAULT_DB_PATH",
     "LanguageConfig",
     "__version__",
@@ -83,10 +89,12 @@ __all__ = [
     "init_db",
     "is_char_in_range",
     "is_devanagari",
+    "is_english_word",
     "list_archive_files",
     "load_aksharantar",
     "load_config",
     "load_culture_dir",
+    "load_historical_book",
     "normalize",
     "parse_unicode_range",
     "related",

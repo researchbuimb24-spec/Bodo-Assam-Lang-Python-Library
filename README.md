@@ -93,8 +93,13 @@ print(res["culture_items"])
 # Extract words from text (Devanagari)
 python -m bhasha_lib.extract document.txt --source-id 1 --license public_domain
 
-# Extract words from text (Latin script)
-python -m bhasha_lib.extract latin_book.txt --source-id 2 --license public_domain --script latin
+# Extract words from text (Latin script with English marking or filtering)
+python -m bhasha_lib.extract latin_book.txt --source-id 2 --license public_domain --script latin --mark-english
+python -m bhasha_lib.extract latin_book.txt --source-id 2 --license public_domain --script latin --filter-english
+
+# Ingest historical books directly from archive.org (Anderson 1895, Endle 1884)
+python -m bhasha_lib.loaders.archive_org --list
+python -m bhasha_lib.loaders.archive_org --book anderson_1895 --db data/lexicon.sqlite
 
 # Load Aksharantar dataset zip directly into database
 python -m bhasha_lib.loaders.aksharantar path/to/brx.zip --license "CC0" --db data/lexicon.sqlite
@@ -136,10 +141,14 @@ bhasha-lib/
 │       ├── config.py                  # YAML LanguageConfig loader
 │       ├── culture.py                 # Markdown frontmatter parser & related() query
 │       ├── db.py                      # SQLite database operations & context manager
+│       ├── english.py                 # English detection & Bodo protected vocabulary
 │       ├── extract.py                 # Text extraction & frequency pipeline
 │       ├── loaders/
 │       │   ├── __init__.py
-│       │   └── aksharantar.py         # AI4Bharat Aksharantar zip loader
+│       │   ├── aksharantar.py         # AI4Bharat Aksharantar zip loader
+│       │   └── archive_org.py         # Archive.org historical books loader
+│       ├── resources/
+│       │   └── english_words.txt      # Curated English vocabulary list
 │       ├── py.typed                   # PEP 561 type annotation marker
 │       ├── sources_import.py          # CSV bibliography importer
 │       ├── tokenizer.py               # Devanagari & Latin tokenizers

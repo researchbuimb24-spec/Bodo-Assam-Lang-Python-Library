@@ -13,6 +13,7 @@ from bhasha_lib.db import (
     add_word,
     init_db,
 )
+from bhasha_lib.english import is_english_word
 from bhasha_lib.tokenizer import tokenize, tokenize_roman
 
 # Licenses that permit storing context snippets
@@ -57,6 +58,8 @@ def extract_file(
     source_id: int = 1,
     license: str = "",
     script: str = "devanagari",
+    mark_english: bool = True,
+    filter_english: bool = False,
 ) -> dict[str, int]:
     """Read a UTF-8 text file, tokenize lines, count frequencies, and store in DB.
 
@@ -69,6 +72,10 @@ def extract_file(
         db_path: Path to the SQLite database.
         source_id: ID of the source record in the database.
         license: License string (e.g. 'public_domain', 'cc0', 'cc-by-sa').
+        script: Tokenizer script: 'devanagari' (default) or 'latin'.
+        mark_english: If True and script is latin, marks English words
+            with dialect='english'.
+        filter_english: If True and script is latin, skips inserting English words.
 
     Returns:
         Dictionary mapping each unique word to its frequency in the file.
@@ -81,9 +88,10 @@ def extract_file(
     init_db(db_path)
 
     open_lic = is_open_license(license)
+    is_latin = script.lower() == "latin"
     word_counts: Counter[str] = Counter()
     word_occurrences: dict[str, list[tuple[int, str]]] = defaultdict(list)
-    tokenizer_fn = tokenize_roman if script.lower() == "latin" else tokenize
+    tokenizer_fn = tokenize_roman if is_latin else tokenize
 
     with open(file_path, encoding="utf-8-sig") as f:
         for line_no, raw_line in enumerate(f, start=1):
@@ -100,13 +108,21 @@ def extract_file(
                     snippet = make_context_snippet(line, token, max_words=15)
                     word_occurrences[token].append((line_no, snippet))
 
+    persisted_counts: dict[str, int] = {}
     # Persist words and their frequencies
     for word, freq in word_counts.items():
-        add_word(word=word, freq=freq, db_path=db_path)
+        is_eng = is_latin and is_english_word(word)
+        if is_eng and filter_english:
+            continue
+        dialect_tag = "english" if (is_latin and mark_english and is_eng) else None
+        add_word(word=word, freq=freq, dialect=dialect_tag, db_path=db_path)
+        persisted_counts[word] = freq
 
     # Persist occurrences if license permits
     if open_lic:
         for word, occurrences in word_occurrences.items():
+            if is_latin and filter_english and is_english_word(word):
+                continue
             for line_no, context in occurrences:
                 add_occurrence(
                     word=word,
@@ -116,7 +132,7 @@ def extract_file(
                     db_path=db_path,
                 )
 
-    return dict(word_counts)
+    return persisted_counts
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -147,6 +163,18 @@ def main(argv: list[str] | None = None) -> int:
         help="Script tokenizer: devanagari (default) or latin",
     )
     parser.add_argument(
+        "--mark-english",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Mark identified English words with dialect='english' (default: True)",
+    )
+    parser.add_argument(
+        "--filter-english",
+        action="store_true",
+        default=False,
+        help="Exclude identified English words from being inserted into words table",
+    )
+    parser.add_argument(
         "--db",
         type=str,
         default=DEFAULT_DB_PATH,
@@ -160,6 +188,8 @@ def main(argv: list[str] | None = None) -> int:
         source_id=args.source_id,
         license=args.license,
         script=args.script,
+        mark_english=args.mark_english,
+        filter_english=args.filter_english,
     )
     print(f"Extracted {len(stats)} unique words from {args.txt_file}.")
     return 0
