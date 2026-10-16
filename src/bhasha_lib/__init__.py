@@ -1,0 +1,97 @@
+"""bhasha_lib - Python library for Indian language processing and linguistic data."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from bhasha_lib.archive import (
+    ARCHIVE_CATEGORIES,
+    get_archive_base_dir,
+    get_archive_path,
+    list_archive_files,
+    verify_archive_structure,
+)
+from bhasha_lib.config import (
+    LanguageConfig,
+    find_default_config,
+    get_bodo_config,
+    load_config,
+)
+from bhasha_lib.db import (
+    DEFAULT_DB_PATH,
+    add_culture_item,
+    add_occurrence,
+    add_source,
+    add_word,
+    init_db,
+    search_word,
+)
+from bhasha_lib.tokenizer import normalize, tokenize, tokenize_roman
+from bhasha_lib.unicode import (
+    calculate_coverage,
+    filter_devanagari,
+    is_char_in_range,
+    is_devanagari,
+    parse_unicode_range,
+)
+
+__version__ = "0.1.0"
+
+
+def __getattr__(name: str) -> Any:
+    """Lazy-load modules to avoid runpy warnings when running modules with -m."""
+    if name == "extract_file":
+        from bhasha_lib.extract import extract_file
+
+        return extract_file
+    if name == "load_aksharantar":
+        from bhasha_lib.loaders.aksharantar import load_aksharantar
+
+        return load_aksharantar
+    if name == "load_culture_dir":
+        from bhasha_lib.culture import load_culture_dir
+
+        return load_culture_dir
+    if name == "related":
+        from bhasha_lib.culture import related
+
+        return related
+    if name == "import_sources_csv":
+        from bhasha_lib.sources_import import import_sources_csv
+
+        return import_sources_csv
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+__all__ = [
+    "ARCHIVE_CATEGORIES",
+    "DEFAULT_DB_PATH",
+    "LanguageConfig",
+    "__version__",
+    "add_culture_item",
+    "add_occurrence",
+    "add_source",
+    "add_word",
+    "calculate_coverage",
+    "extract_file",
+    "filter_devanagari",
+    "find_default_config",
+    "get_archive_base_dir",
+    "get_archive_path",
+    "get_bodo_config",
+    "import_sources_csv",
+    "init_db",
+    "is_char_in_range",
+    "is_devanagari",
+    "list_archive_files",
+    "load_aksharantar",
+    "load_config",
+    "load_culture_dir",
+    "normalize",
+    "parse_unicode_range",
+    "related",
+    "search_word",
+    "tokenize",
+    "tokenize_roman",
+    "verify_archive_structure",
+]

@@ -1,0 +1,6 @@
+# Language configuration for Bodo
+name: Bodo
+code: brx
+script: Devanagari
+unicode_range: "0900-097F"
+tonal: true
