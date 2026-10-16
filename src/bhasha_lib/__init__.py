@@ -17,6 +17,12 @@ from bhasha_lib.config import (
     get_bodo_config,
     load_config,
 )
+from bhasha_lib.consent import (
+    ConsentError,
+    ConsentRecord,
+    ConsentStatus,
+    validate_consent_dict,
+)
 from bhasha_lib.db import (
     DEFAULT_DB_PATH,
     add_culture_item,
@@ -82,12 +88,27 @@ def __getattr__(name: str) -> Any:
         from bhasha_lib.meanings import get_meanings_stats
 
         return get_meanings_stats
+    if name == "load_folk_song_file":
+        from bhasha_lib.folk_songs import load_folk_song_file
+
+        return load_folk_song_file
+    if name == "load_folk_songs_dir":
+        from bhasha_lib.folk_songs import load_folk_songs_dir
+
+        return load_folk_songs_dir
+    if name == "verify_folk_songs_dir":
+        from bhasha_lib.folk_songs import verify_folk_songs_dir
+
+        return verify_folk_songs_dir
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 __all__ = [
     "ARCHIVE_CATEGORIES",
     "BODO_PROTECTED_WORDS",
+    "ConsentError",
+    "ConsentRecord",
+    "ConsentStatus",
     "DEFAULT_DB_PATH",
     "LanguageConfig",
     "__version__",
@@ -115,6 +136,8 @@ __all__ = [
     "load_aksharantar",
     "load_config",
     "load_culture_dir",
+    "load_folk_song_file",
+    "load_folk_songs_dir",
     "load_historical_book",
     "normalize",
     "parse_unicode_range",
@@ -123,5 +146,7 @@ __all__ = [
     "tokenize",
     "tokenize_roman",
     "update_word_meaning",
+    "validate_consent_dict",
     "verify_archive_structure",
+    "verify_folk_songs_dir",
 ]

@@ -115,6 +115,10 @@ python -m bhasha_lib.meanings stats --db data/lexicon.sqlite
 python -m bhasha_lib.meanings export unannotated.csv --min-freq 2 --limit 500 --db data/lexicon.sqlite
 python -m bhasha_lib.meanings import completed_meanings.csv --db data/lexicon.sqlite
 python -m bhasha_lib.meanings bootstrap --db data/lexicon.sqlite
+
+# Verify and ingest traditional folk songs (with verified consent)
+python -m bhasha_lib.folk_songs verify data/archive/bodo/folk_songs
+python -m bhasha_lib.folk_songs load data/archive/bodo/folk_songs --db data/lexicon.sqlite
 ```
 
 ---
@@ -124,6 +128,7 @@ python -m bhasha_lib.meanings bootstrap --db data/lexicon.sqlite
 ```
 bhasha-lib/
 ├── LICENSE                            # MIT License (for CODE only)
+├── CONSENT_AND_ETHICS.md              # Ethical archiving protocol & consent template
 ├── pyproject.toml                     # Package dependencies and tool settings
 ├── bodo.yaml                          # Bodo language specification
 ├── configs/
@@ -136,19 +141,23 @@ bhasha-lib/
 │           │   ├── bathou.md
 │           │   ├── bwisagu.md
 │           │   └── kherai.md
+│           ├── folk_songs/            # Folk songs & audio (excluded by .gitignore)
 │           ├── history/               # Historical notes (.md tracked)
 │           ├── books/                 # Raw texts & books (excluded by .gitignore)
-│           ├── datasets/              # External dataset archives (excluded by .gitignore)
-│           └── folk_songs/            # Folk songs & audio (excluded by .gitignore)
+│           └── datasets/              # External dataset archives (excluded by .gitignore)
+├── examples/
+│   └── folk_song_template.md          # Sample folk song template with consent schema
 ├── src/
 │   └── bhasha_lib/
 │       ├── __init__.py                # Package exports & lazy loaders
 │       ├── archive.py                 # Archive path resolution
 │       ├── config.py                  # YAML LanguageConfig loader
+│       ├── consent.py                 # Ethical consent verification & compliance
 │       ├── culture.py                 # Markdown frontmatter parser & related() query
 │       ├── db.py                      # SQLite database operations & context manager
 │       ├── english.py                 # English detection & Bodo protected vocabulary
 │       ├── extract.py                 # Text extraction & frequency pipeline
+│       ├── folk_songs.py              # Folk songs ingestion & consent enforcement
 │       ├── loaders/
 │       │   ├── __init__.py
 │       │   ├── aksharantar.py         # AI4Bharat Aksharantar zip loader
