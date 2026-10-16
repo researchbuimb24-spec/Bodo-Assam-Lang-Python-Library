@@ -72,10 +72,18 @@ def __getattr__(name: str) -> Any:
         from bhasha_lib.loaders.archive_org import load_historical_book
 
         return load_historical_book
+    if name == "export_for_review":
+        from bhasha_lib.meanings import export_for_review
+
+        return export_for_review
     if name == "export_meanings_csv":
         from bhasha_lib.meanings import export_meanings_csv
 
         return export_meanings_csv
+    if name == "import_meanings":
+        from bhasha_lib.meanings import import_meanings
+
+        return import_meanings
     if name == "import_meanings_csv":
         from bhasha_lib.meanings import import_meanings_csv
 
@@ -118,6 +126,7 @@ __all__ = [
     "add_word",
     "bootstrap_seed_meanings",
     "calculate_coverage",
+    "export_for_review",
     "export_meanings_csv",
     "extract_file",
     "filter_devanagari",
@@ -126,6 +135,7 @@ __all__ = [
     "get_archive_path",
     "get_bodo_config",
     "get_meanings_stats",
+    "import_meanings",
     "import_meanings_csv",
     "import_sources_csv",
     "init_db",

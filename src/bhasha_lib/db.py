@@ -32,7 +32,10 @@ CREATE TABLE IF NOT EXISTS words (
     pos TEXT,
     tone TEXT,
     dialect TEXT,
-    freq INTEGER DEFAULT 0
+    freq INTEGER DEFAULT 0,
+    origin TEXT,
+    status TEXT DEFAULT 'unverified',
+    verified_by TEXT
 );
 
 CREATE TABLE IF NOT EXISTS occurrences (
@@ -84,10 +87,24 @@ def get_connection(
 
 
 def init_db(path: str | Path = DEFAULT_DB_PATH) -> Path:
-    """Initialize database tables if they do not exist."""
+    """Initialize database tables and run migrations if columns do not exist."""
     with get_connection(path) as conn:
         cursor = conn.cursor()
         cursor.executescript(SCHEMA)
+
+        # Migration: add origin, status, verified_by to words table if missing
+        cursor.execute("PRAGMA table_info(words)")
+        existing_cols = {row["name"] for row in cursor.fetchall()}
+
+        if "origin" not in existing_cols:
+            cursor.execute("ALTER TABLE words ADD COLUMN origin TEXT")
+        if "status" not in existing_cols:
+            cursor.execute(
+                "ALTER TABLE words ADD COLUMN status TEXT DEFAULT 'unverified'"
+            )
+        if "verified_by" not in existing_cols:
+            cursor.execute("ALTER TABLE words ADD COLUMN verified_by TEXT")
+
     return Path(path)
 
 
@@ -143,6 +160,9 @@ def add_word(
     pos: str | None = None,
     tone: str | None = None,
     dialect: str | None = None,
+    origin: str | None = None,
+    status: str = "unverified",
+    verified_by: str | None = None,
     freq: int = 1,
     db_path: str | Path = DEFAULT_DB_PATH,
 ) -> None:
@@ -162,9 +182,10 @@ def add_word(
         cursor.execute(
             """
             INSERT INTO words (
-                word, roman, meaning_hi, meaning_en, pos, tone, dialect, freq
+                word, roman, meaning_hi, meaning_en, pos, tone, dialect,
+                origin, status, verified_by, freq
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(word) DO UPDATE SET
                 freq = words.freq + excluded.freq,
                 roman = COALESCE(excluded.roman, words.roman),
@@ -172,7 +193,10 @@ def add_word(
                 meaning_en = COALESCE(excluded.meaning_en, words.meaning_en),
                 pos = COALESCE(excluded.pos, words.pos),
                 tone = COALESCE(excluded.tone, words.tone),
-                dialect = COALESCE(excluded.dialect, words.dialect)
+                dialect = COALESCE(excluded.dialect, words.dialect),
+                origin = COALESCE(excluded.origin, words.origin),
+                status = COALESCE(excluded.status, words.status),
+                verified_by = COALESCE(excluded.verified_by, words.verified_by)
             """,
             (
                 normalized_word,
@@ -182,6 +206,9 @@ def add_word(
                 pos,
                 tone,
                 dialect,
+                origin,
+                status,
+                verified_by,
                 freq_increment,
             ),
         )
@@ -195,9 +222,12 @@ def update_word_meaning(
     pos: str | None = None,
     tone: str | None = None,
     dialect: str | None = None,
+    origin: str | None = None,
+    status: str | None = None,
+    verified_by: str | None = None,
     db_path: str | Path = DEFAULT_DB_PATH,
 ) -> bool:
-    """Update meaning, POS, tone, or romanization of an existing word.
+    """Update meaning, POS, tone, origin, status, or verified_by of an existing word.
 
     Does not modify the word's frequency counter.
 
@@ -219,7 +249,10 @@ def update_word_meaning(
                 roman = COALESCE(?, roman),
                 pos = COALESCE(?, pos),
                 tone = COALESCE(?, tone),
-                dialect = COALESCE(?, dialect)
+                dialect = COALESCE(?, dialect),
+                origin = COALESCE(?, origin),
+                status = COALESCE(?, status),
+                verified_by = COALESCE(?, verified_by)
             WHERE word = ?
             """,
             (
@@ -229,6 +262,9 @@ def update_word_meaning(
                 pos if pos and pos.strip() else None,
                 tone if tone and tone.strip() else None,
                 dialect if dialect and dialect.strip() else None,
+                origin if origin and origin.strip() else None,
+                status if status and status.strip() else None,
+                verified_by if verified_by and verified_by.strip() else None,
                 normalized_word,
             ),
         )
@@ -321,7 +357,9 @@ def search_word(
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT word, roman, meaning_hi, meaning_en, pos, tone, dialect, freq
+            SELECT
+                word, roman, meaning_hi, meaning_en, pos, tone, dialect,
+                freq, origin, status, verified_by
             FROM words
             WHERE word = ?
             """,

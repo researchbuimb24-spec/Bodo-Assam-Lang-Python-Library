@@ -2,6 +2,7 @@
 *.zip
 *.sqlite
 *.db
+data/*.csv
 
 # Data archive directories
 data/archive/*/books/

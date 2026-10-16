@@ -1,534 +1,371 @@
-"""Lexical annotation and meanings workflow module for bhasha_lib."""
+"""Lexical annotation and review workflow module for bhasha_lib."""
 
 from __future__ import annotations
 
 import argparse
 import csv
+import random
 import sys
 from pathlib import Path
 from typing import Any
 
 from bhasha_lib.db import (
     DEFAULT_DB_PATH,
-    add_word,
     get_connection,
     init_db,
     update_word_meaning,
 )
 
-# Foundational vocabulary with verified Hindi and English meanings
-FOUNDATIONAL_SEED_MEANINGS: list[dict[str, Any]] = [
-    {
-        "word": "बड़ो",
-        "roman": "bodo",
-        "meaning_hi": "बोडो (असम की मूल जनजाति व भाषा)",
-        "meaning_en": "Bodo (indigenous community and language of Assam)",
-        "pos": "noun",
-    },
-    {
-        "word": "राव",
-        "roman": "rao",
-        "meaning_hi": "भाषा, बोली",
-        "meaning_en": "language, speech",
-        "pos": "noun",
-    },
-    {
-        "word": "आफा",
-        "roman": "afa",
-        "meaning_hi": "पिता; संघ, सभा",
-        "meaning_en": "father; association, council",
-        "pos": "noun",
-    },
-    {
-        "word": "गाहाम",
-        "roman": "gaham",
-        "meaning_hi": "अच्छा, शुभ",
-        "meaning_en": "good, well, auspicious",
-        "pos": "adjective",
-    },
-    {
-        "word": "खाम",
-        "roman": "kham",
-        "meaning_hi": "पारंपरिक ढोल / मृदंग",
-        "meaning_en": "traditional Bodo drum",
-        "pos": "noun",
-    },
-    {
-        "word": "सिफुं",
-        "roman": "siphung",
-        "meaning_hi": "५ छेदों वाली पारंपरिक बांसुरी",
-        "meaning_en": "traditional 5-hole bamboo flute",
-        "pos": "noun",
-    },
-    {
-        "word": "सेरजा",
-        "roman": "serja",
-        "meaning_hi": "सारंगी जैसा पारंपरिक तार-वाद्य",
-        "meaning_en": "traditional stringed instrument / violin",
-        "pos": "noun",
-    },
-    {
-        "word": "दखना",
-        "roman": "dokhona",
-        "meaning_hi": "बोडो महिलाओं की पारंपरिक पोशाक",
-        "meaning_en": "traditional attire of Bodo women",
-        "pos": "noun",
-    },
-    {
-        "word": "आरनाय",
-        "roman": "aronai",
-        "meaning_hi": "सम्मान का प्रतीक पारंपरिक स्कार्फ",
-        "meaning_en": "traditional decorative scarf of honour",
-        "pos": "noun",
-    },
-    {
-        "word": "नाफाम",
-        "roman": "napham",
-        "meaning_hi": "पारंपरिक किण्वित (fermented) मछली",
-        "meaning_en": "traditional fermented fish delicacy",
-        "pos": "noun",
-    },
-    {
-        "word": "अं",
-        "roman": "ang",
-        "meaning_hi": "मैं, मुझे",
-        "meaning_en": "I, me",
-        "pos": "pronoun",
-    },
-    {
-        "word": "नों",
-        "roman": "nwng",
-        "meaning_hi": "तुम, आप",
-        "meaning_en": "you",
-        "pos": "pronoun",
-    },
-    {
-        "word": "बि",
-        "roman": "bi",
-        "meaning_hi": "वह, यह",
-        "meaning_en": "he, she, that",
-        "pos": "pronoun",
-    },
-    {
-        "word": "जों",
-        "roman": "zong",
-        "meaning_hi": "हम, हमें",
-        "meaning_en": "we, us",
-        "pos": "pronoun",
-    },
-    {
-        "word": "मा",
-        "roman": "ma",
-        "meaning_hi": "क्या",
-        "meaning_en": "what",
-        "pos": "pronoun",
-    },
-    {
-        "word": "दा",
-        "roman": "da",
-        "meaning_hi": "मत, नहीं (निषेधार्थक)",
-        "meaning_en": "do not (prohibitive particle)",
-        "pos": "particle",
-    },
-    {
-        "word": "हा",
-        "roman": "ha",
-        "meaning_hi": "भूमि, जमीन, धरती",
-        "meaning_en": "land, soil, earth",
-        "pos": "noun",
-    },
-    {
-        "word": "नो",
-        "roman": "no",
-        "meaning_hi": "घर, मकान",
-        "meaning_en": "house, home",
-        "pos": "noun",
-    },
-    {
-        "word": "फै",
-        "roman": "fai",
-        "meaning_hi": "आना",
-        "meaning_en": "to come",
-        "pos": "verb",
-    },
-    {
-        "word": "थां",
-        "roman": "thang",
-        "meaning_hi": "जाना",
-        "meaning_en": "to go",
-        "pos": "verb",
-    },
-    {
-        "word": "जा",
-        "roman": "za",
-        "meaning_hi": "खाना; होना, बनना",
-        "meaning_en": "to eat; to become, to happen",
-        "pos": "verb",
-    },
-    {
-        "word": "से",
-        "roman": "se",
-        "meaning_hi": "एक (१)",
-        "meaning_en": "one (1)",
-        "pos": "numeral",
-    },
-    {
-        "word": "नै",
-        "roman": "nwi",
-        "meaning_hi": "दो (२)",
-        "meaning_en": "two (2)",
-        "pos": "numeral",
-    },
-    {
-        "word": "थाम",
-        "roman": "tham",
-        "meaning_hi": "तीन (३)",
-        "meaning_en": "three (3)",
-        "pos": "numeral",
-    },
-    {
-        "word": "ब्रै",
-        "roman": "brui",
-        "meaning_hi": "चार (४)",
-        "meaning_en": "four (4)",
-        "pos": "numeral",
-    },
-    {
-        "word": "बा",
-        "roman": "ba",
-        "meaning_hi": "पांच (५)",
-        "meaning_en": "five (5)",
-        "pos": "numeral",
-    },
-    {
-        "word": "द'",
-        "roman": "do",
-        "meaning_hi": "छह (६)",
-        "meaning_en": "six (6)",
-        "pos": "numeral",
-    },
-    {
-        "word": "स्नि",
-        "roman": "sni",
-        "meaning_hi": "सात (७)",
-        "meaning_en": "seven (7)",
-        "pos": "numeral",
-    },
-    {
-        "word": "दाय",
-        "roman": "dath",
-        "meaning_hi": "आठ (८)",
-        "meaning_en": "eight (8)",
-        "pos": "numeral",
-    },
-    {
-        "word": "गु",
-        "roman": "gu",
-        "meaning_hi": "नौ (९)",
-        "meaning_en": "nine (9)",
-        "pos": "numeral",
-    },
-    {
-        "word": "जि",
-        "roman": "zi",
-        "meaning_hi": "दस (१०)",
-        "meaning_en": "ten (10)",
-        "pos": "numeral",
-    },
+VALID_ORIGINS: frozenset[str] = frozenset({"bodo", "loan", "unsure"})
+VALID_STATUSES: frozenset[str] = frozenset({"unverified", "community", "expert"})
+
+CSV_FIELDNAMES: list[str] = [
+    "word",
+    "roman",
+    "meaning_hi",
+    "meaning_en",
+    "pos",
+    "origin",
+    "dialect",
+    "verified_by",
+    "notes",
 ]
 
 
-def export_meanings_csv(
-    out_path: str | Path,
-    db_path: str | Path = DEFAULT_DB_PATH,
-    min_freq: int = 1,
-    limit: int | None = None,
-    script: str = "all",
-    only_empty: bool = True,
-) -> int:
-    """Export words needing annotation into a CSV template.
+def _resolve_paths(
+    p1: str | Path,
+    p2: str | Path,
+) -> tuple[Path, Path]:
+    """Helper to flexibly handle (db_path, csv_path) or (csv_path, db_path)."""
+    s1, s2 = str(p1), str(p2)
+    if (s1.endswith(".sqlite") or s1.endswith(".db")) or s2.endswith(".csv"):
+        return Path(p1), Path(p2)
+    if (s2.endswith(".sqlite") or s2.endswith(".db")) or s1.endswith(".csv"):
+        return Path(p2), Path(p1)
+    return Path(p1), Path(p2)
 
-    Writes CSV using UTF-8-SIG encoding so spreadsheet tools (Excel,
-    LibreOffice, Google Sheets) properly display Indic/Devanagari scripts.
+
+def export_for_review(
+    db_path: str | Path = DEFAULT_DB_PATH,
+    csv_path: str | Path = "data/review_batch_1.csv",
+    limit: int = 500,
+    only_empty: bool = True,
+    seed: int = 1,
+) -> int:
+    """Export words needing review into a UTF-8 with BOM CSV template.
+
+    Picks words where meaning_hi and meaning_en are both empty in a random
+    but repeatable order based on seed.
 
     Args:
-        out_path: File path to save the exported CSV.
         db_path: Path to the SQLite database.
-        min_freq: Minimum frequency threshold to export.
-        limit: Maximum number of rows to export (None for all).
-        script: Filter script: 'devanagari', 'latin', or 'all'.
-        only_empty: If True, only exports words lacking Hindi or English meanings.
+        csv_path: Destination CSV file path.
+        limit: Maximum number of rows to export (default: 500).
+        only_empty: Only include words with both meanings empty (default: True).
+        seed: Random seed for deterministic reproducibility (default: 1).
 
     Returns:
-        Number of exported word rows.
+        Number of word rows exported.
     """
-    init_db(db_path)
-    out_file = Path(out_path)
-    out_file.parent.mkdir(parents=True, exist_ok=True)
+    actual_db_path, actual_csv_path = _resolve_paths(db_path, csv_path)
+    init_db(actual_db_path)
 
-    conditions = ["(dialect IS NULL OR dialect != 'english')"]
-    params: list[Any] = []
+    actual_csv_path.parent.mkdir(parents=True, exist_ok=True)
 
+    conditions: list[str] = []
     if only_empty:
         conditions.append(
-            "((meaning_hi IS NULL OR meaning_hi = '') AND "
-            "(meaning_en IS NULL OR meaning_en = ''))"
+            "(meaning_hi IS NULL OR meaning_hi = '') AND "
+            "(meaning_en IS NULL OR meaning_en = '')"
         )
 
-    if min_freq > 1:
-        conditions.append("freq >= ?")
-        params.append(min_freq)
-
+    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     query = f"""
-        SELECT word, roman, meaning_hi, meaning_en, pos, tone, dialect, freq
+        SELECT word, roman, meaning_hi, meaning_en, pos, origin, dialect, verified_by
         FROM words
-        WHERE {" AND ".join(conditions)}
-        ORDER BY freq DESC, word ASC
+        {where_clause}
+        ORDER BY word ASC
     """
-    if limit is not None:
-        query += f" LIMIT {int(limit)}"
 
-    rows: list[dict[str, Any]] = []
-    with get_connection(db_path) as conn:
+    with get_connection(actual_db_path) as conn:
         cursor = conn.cursor()
-        cursor.execute(query, tuple(params))
-        all_words = [dict(r) for r in cursor.fetchall()]
+        cursor.execute(query)
+        candidate_rows = [dict(r) for r in cursor.fetchall()]
 
-        # Filter by script if requested
-        for r in all_words:
-            w = r["word"]
-            has_devanagari = any("\u0900" <= c <= "\u097f" for c in w)
-            if script.lower() == "devanagari" and not has_devanagari:
-                continue
-            if script.lower() == "latin" and has_devanagari:
-                continue
+    # Shuffle deterministically using repeatable seed
+    rng = random.Random(seed)
+    rng.shuffle(candidate_rows)
 
-            # Fetch up to 1 example context occurrence to aid annotators
-            cursor.execute(
-                "SELECT context FROM occurrences WHERE word = ? LIMIT 1",
-                (w,),
-            )
-            occ = cursor.fetchone()
-            r["example_context"] = occ[0] if occ else ""
-            rows.append(r)
+    selected_rows = candidate_rows[:limit] if limit is not None else candidate_rows
 
-    fieldnames = [
-        "word",
-        "roman",
-        "meaning_hi",
-        "meaning_en",
-        "pos",
-        "tone",
-        "dialect",
-        "freq",
-        "example_context",
-    ]
-
-    with open(out_file, mode="w", encoding="utf-8-sig", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+    with open(actual_csv_path, mode="w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=CSV_FIELDNAMES)
         writer.writeheader()
-        for row in rows:
-            writer.writerow(row)
+        for row in selected_rows:
+            writer.writerow(
+                {
+                    "word": row.get("word") or "",
+                    "roman": row.get("roman") or "",
+                    "meaning_hi": row.get("meaning_hi") or "",
+                    "meaning_en": row.get("meaning_en") or "",
+                    "pos": row.get("pos") or "",
+                    "origin": row.get("origin") or "",
+                    "dialect": row.get("dialect") or "",
+                    "verified_by": row.get("verified_by") or "",
+                    "notes": "",
+                }
+            )
 
-    return len(rows)
+    return len(selected_rows)
 
 
-def import_meanings_csv(
+# Alias for backwards compatibility
+export_meanings_csv = export_for_review
+
+
+def import_meanings(
     csv_path: str | Path,
     db_path: str | Path = DEFAULT_DB_PATH,
 ) -> dict[str, int]:
-    """Import filled meanings from a CSV file into the database.
+    """Import reviewed meanings from CSV into database with validation.
 
-    Updates meaning_hi, meaning_en, pos, tone, and dialect. Does not
-    modify existing frequencies.
+    Rules:
+    - Read the CSV as UTF-8 (accept BOM).
+    - Skip a row if all of meaning_hi, meaning_en are empty.
+    - REJECT a row (print line number) if verified_by is empty, or if origin is
+      not one of bodo, loan, unsure (empty origin is allowed and stays unchanged).
+    - Never overwrite an existing non-empty meaning. If a meaning already exists
+      and differs, print a conflict line and skip it.
+    - Never change the word text itself.
+    - Set status to 'community' and store verified_by.
+    - Print a summary: updated, skipped, rejected, conflicts.
 
     Returns:
-        Summary dict: {'updated': int, 'inserted': int, 'total': int}
+        Summary dict:
+        {'updated': int, 'skipped': int, 'rejected': int, 'conflicts': int}
     """
-    path = Path(csv_path)
-    if not path.is_file():
-        raise FileNotFoundError(f"CSV file not found: {path}")
+    actual_db_path, actual_csv_path = _resolve_paths(db_path, csv_path)
+    if not actual_csv_path.is_file():
+        raise FileNotFoundError(f"CSV file not found: {actual_csv_path}")
 
-    init_db(db_path)
+    init_db(actual_db_path)
     updated = 0
-    inserted = 0
-    total = 0
+    skipped = 0
+    rejected = 0
+    conflicts = 0
 
-    with open(path, encoding="utf-8-sig", newline="") as f:
+    with open(actual_csv_path, encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
-        for row in reader:
-            total += 1
+        for line_no, row in enumerate(reader, start=2):  # Header is line 1
             word = (row.get("word") or "").strip()
             if not word:
                 continue
 
             meaning_hi = (row.get("meaning_hi") or "").strip() or None
             meaning_en = (row.get("meaning_en") or "").strip() or None
-            roman = (row.get("roman") or "").strip() or None
+            origin_raw = (row.get("origin") or "").strip().lower()
+            origin = origin_raw if origin_raw else None
+            verified_by = (row.get("verified_by") or "").strip() or None
             pos = (row.get("pos") or "").strip() or None
-            tone = (row.get("tone") or "").strip() or None
             dialect = (row.get("dialect") or "").strip() or None
 
-            # Skip rows where no semantic fields are filled
-            if not any([meaning_hi, meaning_en, pos, tone, dialect]):
+            # Skip row if both meanings are empty
+            if not meaning_hi and not meaning_en:
+                skipped += 1
                 continue
 
-            did_update = update_word_meaning(
-                word=word,
-                meaning_hi=meaning_hi,
-                meaning_en=meaning_en,
-                roman=roman,
-                pos=pos,
-                tone=tone,
-                dialect=dialect,
-                db_path=db_path,
-            )
-            if did_update:
+            # Validation: verified_by is mandatory when meanings are supplied
+            if not verified_by:
+                print(
+                    f"Line {line_no}: Rejected - 'verified_by' is empty "
+                    f"for word '{word}'."
+                )
+                rejected += 1
+                continue
+
+            # Validation: origin must be bodo, loan, unsure, or empty
+            if origin and origin not in VALID_ORIGINS:
+                print(
+                    f"Line {line_no}: Rejected - Invalid origin '{origin}' "
+                    f"for word '{word}'. Must be one of: "
+                    f"{sorted(VALID_ORIGINS)} or empty."
+                )
+                rejected += 1
+                continue
+
+            # Fetch existing word details
+            with get_connection(actual_db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT meaning_hi, meaning_en, origin FROM words WHERE word = ?",
+                    (word,),
+                )
+                existing = cursor.fetchone()
+
+            if existing is not None:
+                exist_hi = existing["meaning_hi"] or None
+                exist_en = existing["meaning_en"] or None
+                exist_origin = existing["origin"] or None
+
+                # Check for conflicts on non-empty existing meanings
+                conflict_found = False
+                if exist_hi and meaning_hi and exist_hi != meaning_hi:
+                    print(
+                        f"Line {line_no}: Conflict - Word '{word}' already has "
+                        f"meaning_hi='{exist_hi}', incoming='{meaning_hi}'. Skipping."
+                    )
+                    conflict_found = True
+                if exist_en and meaning_en and exist_en != meaning_en:
+                    print(
+                        f"Line {line_no}: Conflict - Word '{word}' already has "
+                        f"meaning_en='{exist_en}', incoming='{meaning_en}'. Skipping."
+                    )
+                    conflict_found = True
+
+                if conflict_found:
+                    conflicts += 1
+                    continue
+
+                target_hi = exist_hi if exist_hi else meaning_hi
+                target_en = exist_en if exist_en else meaning_en
+                target_origin = origin if origin else exist_origin
+
+                update_word_meaning(
+                    word=word,
+                    meaning_hi=target_hi,
+                    meaning_en=target_en,
+                    pos=pos,
+                    origin=target_origin,
+                    status="community",
+                    verified_by=verified_by,
+                    dialect=dialect,
+                    db_path=actual_db_path,
+                )
                 updated += 1
             else:
-                # If word does not exist, insert it
-                add_word(
-                    word=word,
-                    roman=roman,
-                    meaning_hi=meaning_hi,
-                    meaning_en=meaning_en,
-                    pos=pos,
-                    tone=tone,
-                    dialect=dialect,
-                    freq=1,
-                    db_path=db_path,
-                )
-                inserted += 1
+                # Word does not exist in lexicon; skip to preserve lexicon integrity
+                skipped += 1
 
-    return {"updated": updated, "inserted": inserted, "total": total}
+    summary = {
+        "updated": updated,
+        "skipped": skipped,
+        "rejected": rejected,
+        "conflicts": conflicts,
+    }
+    print(
+        f"Summary: {updated} updated, {skipped} skipped, "
+        f"{rejected} rejected, {conflicts} conflicts."
+    )
+    return summary
 
 
-def bootstrap_seed_meanings(
-    db_path: str | Path = DEFAULT_DB_PATH,
-) -> dict[str, int]:
-    """Bootstrap foundational Bodo vocabulary with verified meanings."""
-    init_db(db_path)
-    applied = 0
-    for item in FOUNDATIONAL_SEED_MEANINGS:
-        did_update = update_word_meaning(
-            word=item["word"],
-            meaning_hi=item.get("meaning_hi"),
-            meaning_en=item.get("meaning_en"),
-            roman=item.get("roman"),
-            pos=item.get("pos"),
-            db_path=db_path,
-        )
-        if not did_update:
-            add_word(
-                word=item["word"],
-                roman=item.get("roman"),
-                meaning_hi=item.get("meaning_hi"),
-                meaning_en=item.get("meaning_en"),
-                pos=item.get("pos"),
-                freq=1,
-                db_path=db_path,
-            )
-        applied += 1
-    return {"applied": applied, "total": len(FOUNDATIONAL_SEED_MEANINGS)}
+# Alias for backwards compatibility
+import_meanings_csv = import_meanings
 
 
 def get_meanings_stats(
     db_path: str | Path = DEFAULT_DB_PATH,
 ) -> dict[str, Any]:
-    """Return statistical summary of lexicon meanings coverage."""
+    """Return statistical summary of meanings, status, and origins."""
     init_db(db_path)
     with get_connection(db_path) as conn:
         cursor = conn.cursor()
-        cursor.execute(
-            "SELECT count(1) FROM words WHERE (dialect IS NULL OR dialect != 'english')"
-        )
-        total_native = int(cursor.fetchone()[0])
 
+        # Total words
+        cursor.execute("SELECT count(1) FROM words")
+        total_words = int(cursor.fetchone()[0])
+
+        # Words with any meaning
         cursor.execute(
             """
             SELECT count(1) FROM words
-            WHERE (dialect IS NULL OR dialect != 'english')
-              AND ((meaning_hi IS NOT NULL AND meaning_hi != '')
-                   OR (meaning_en IS NOT NULL AND meaning_en != ''))
+            WHERE (meaning_hi IS NOT NULL AND meaning_hi != '')
+               OR (meaning_en IS NOT NULL AND meaning_en != '')
             """
         )
-        annotated = int(cursor.fetchone()[0])
+        words_with_meaning = int(cursor.fetchone()[0])
 
-        empty = total_native - annotated
-        pct = (annotated / total_native * 100.0) if total_native > 0 else 0.0
+        # Count by status
+        cursor.execute(
+            "SELECT COALESCE(status, 'unverified') as st, count(1) "
+            "FROM words GROUP BY st"
+        )
+        status_counts = {row["st"]: row[1] for row in cursor.fetchall()}
+
+        # Count by origin
+        cursor.execute(
+            "SELECT COALESCE(origin, 'unset') as orig, count(1) "
+            "FROM words GROUP BY orig"
+        )
+        origin_counts = {row["orig"]: row[1] for row in cursor.fetchall()}
 
     return {
-        "total_words": total_native,
-        "annotated_words": annotated,
-        "empty_words": empty,
-        "coverage_percentage": round(pct, 2),
+        "total_words": total_words,
+        "words_with_meaning": words_with_meaning,
+        "status_counts": status_counts,
+        "origin_counts": origin_counts,
     }
 
 
+def print_stats(db_path: str | Path = DEFAULT_DB_PATH) -> dict[str, Any]:
+    """Print meanings statistics to standard output."""
+    stats = get_meanings_stats(db_path=db_path)
+    print("Lexicon Meanings Statistics:")
+    print(f"  Total words: {stats['total_words']}")
+    print(f"  Words with any meaning: {stats['words_with_meaning']}")
+    print("  Count by status:")
+    for st, count in sorted(stats["status_counts"].items()):
+        print(f"    - {st}: {count}")
+    print("  Count by origin:")
+    for orig, count in sorted(stats["origin_counts"].items()):
+        print(f"    - {orig}: {count}")
+    return stats
+
+
 def main(argv: list[str] | None = None) -> int:
-    """CLI entry point for meanings export, import, and stats."""
+    """CLI entry point for export, import, and stats."""
     parser = argparse.ArgumentParser(
-        description="Manage lexical meanings and community annotation workflows."
+        description="Manage lexical meanings review workflow."
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    # Subcommand: stats
-    stats_p = subparsers.add_parser("stats", help="Show meanings coverage statistics")
-    stats_p.add_argument(
-        "--db",
-        type=str,
-        default=DEFAULT_DB_PATH,
-        help=f"Path to SQLite database (default: {DEFAULT_DB_PATH})",
-    )
-
-    # Subcommand: export
-    export_p = subparsers.add_parser(
-        "export", help="Export words template to CSV for annotation"
-    )
-    export_p.add_argument("output_csv", type=str, help="Destination CSV file path")
-    export_p.add_argument(
-        "--min-freq",
-        type=int,
-        default=1,
-        help="Minimum word frequency to export (default: 1)",
-    )
-    export_p.add_argument(
+    # export
+    p_export = subparsers.add_parser("export", help="Export words for community review")
+    p_export.add_argument("out_csv", type=str, help="Destination CSV file path")
+    p_export.add_argument(
         "--limit",
         type=int,
-        default=None,
-        help="Maximum number of words to export (default: all)",
+        default=500,
+        help="Maximum words to export (default: 500)",
     )
-    export_p.add_argument(
-        "--script",
+    p_export.add_argument(
+        "--db",
         type=str,
-        choices=["devanagari", "latin", "all"],
-        default="all",
-        help="Filter by script: devanagari, latin, or all (default: all)",
+        default=DEFAULT_DB_PATH,
+        help=f"Path to SQLite database (default: {DEFAULT_DB_PATH})",
     )
-    export_p.add_argument(
+    p_export.add_argument(
+        "--seed",
+        type=int,
+        default=1,
+        help="Random seed for repeatable sampling (default: 1)",
+    )
+
+    # import
+    p_import = subparsers.add_parser(
+        "import", help="Import filled review CSV into database"
+    )
+    p_import.add_argument("in_csv", type=str, help="Reviewed input CSV path")
+    p_import.add_argument(
         "--db",
         type=str,
         default=DEFAULT_DB_PATH,
         help=f"Path to SQLite database (default: {DEFAULT_DB_PATH})",
     )
 
-    # Subcommand: import
-    import_p = subparsers.add_parser(
-        "import", help="Import filled meanings from CSV file"
-    )
-    import_p.add_argument("input_csv", type=str, help="Source CSV file path")
-    import_p.add_argument(
-        "--db",
-        type=str,
-        default=DEFAULT_DB_PATH,
-        help=f"Path to SQLite database (default: {DEFAULT_DB_PATH})",
-    )
-
-    # Subcommand: bootstrap
-    boot_p = subparsers.add_parser(
-        "bootstrap", help="Bootstrap core foundational Bodo vocabulary"
-    )
-    boot_p.add_argument(
+    # stats
+    p_stats = subparsers.add_parser("stats", help="Display lexicon meanings statistics")
+    p_stats.add_argument(
         "--db",
         type=str,
         default=DEFAULT_DB_PATH,
@@ -537,38 +374,22 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
 
-    if args.command == "stats":
-        stats = get_meanings_stats(db_path=args.db)
-        print("Lexicon Meanings Coverage:")
-        print(f"  Total native words: {stats['total_words']}")
-        print(f"  Annotated with meaning: {stats['annotated_words']}")
-        print(f"  Empty meanings: {stats['empty_words']}")
-        print(f"  Coverage: {stats['coverage_percentage']}%")
-        return 0
-
     if args.command == "export":
-        count = export_meanings_csv(
-            out_path=args.output_csv,
+        exported = export_for_review(
             db_path=args.db,
-            min_freq=args.min_freq,
+            csv_path=args.out_csv,
             limit=args.limit,
-            script=args.script,
+            seed=args.seed,
         )
-        print(f"Exported {count} words to '{args.output_csv}'.")
+        print(f"Exported {exported} words for review to '{args.out_csv}'.")
         return 0
 
     if args.command == "import":
-        res = import_meanings_csv(csv_path=args.input_csv, db_path=args.db)
-        print(
-            f"Imported from '{args.input_csv}': "
-            f"{res['updated']} updated, {res['inserted']} inserted "
-            f"out of {res['total']} rows."
-        )
+        import_meanings(csv_path=args.in_csv, db_path=args.db)
         return 0
 
-    if args.command == "bootstrap":
-        b_res = bootstrap_seed_meanings(db_path=args.db)
-        print(f"Bootstrapped {b_res['applied']} foundational words with meanings.")
+    if args.command == "stats":
+        print_stats(db_path=args.db)
         return 0
 
     return 0
