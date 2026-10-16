@@ -75,6 +75,51 @@ def strip_gutenberg(text: str) -> str:
     return "".join(lines[start_idx:end_idx])
 
 
+ENGLISH_ENDINGS: tuple[str, ...] = (
+    "'s",
+    "s",
+    "es",
+    "ed",
+    "d",
+    "ing",
+    "ly",
+    "er",
+    "est",
+)
+
+
+def is_english_inflection(token: str, wordlist_set: set[str]) -> bool:
+    """Check if token is an inflected English word whose stem is in wordlist_set.
+
+    Tries removing endings: 's, s, es, ed, d, ing, ly, er, est.
+    For -ing and -ed, also tries:
+      - adding back 'e' (e.g. 'dancing' -> 'dance', 'cared' -> 'care')
+      - removing doubled final consonant (e.g. 'running' -> 'run', 'stopped' -> 'stop')
+    Only stems with at least 3 letters are considered.
+    """
+    token_lower = token.lower()
+
+    for ending in ENGLISH_ENDINGS:
+        if token_lower.endswith(ending):
+            stem = token_lower[: -len(ending)]
+            if len(stem) >= 3 and stem in wordlist_set:
+                return True
+
+            if ending in ("ing", "ed"):
+                # Try adding back 'e'
+                stem_e = stem + "e"
+                if len(stem_e) >= 3 and stem_e in wordlist_set:
+                    return True
+
+                # Try removing doubled final consonant
+                if len(stem) >= 3 and stem[-1] == stem[-2]:
+                    stem_single = stem[:-1]
+                    if len(stem_single) >= 3 and stem_single in wordlist_set:
+                        return True
+
+    return False
+
+
 def extract_file(
     path: str | Path,
     db_path: str | Path = DEFAULT_DB_PATH,
@@ -85,6 +130,7 @@ def extract_file(
     filter_english: bool = False,
     gutenberg: bool = False,
     english_wordlist: str | Path | None = None,
+    keep_list: str | Path | None = None,
 ) -> dict[str, int]:
     """Read a UTF-8 text file, tokenize lines, count frequencies, and store in DB.
 
@@ -103,6 +149,7 @@ def extract_file(
         filter_english: If True and script is latin, skips inserting English words.
         gutenberg: If True, strips Gutenberg header and footer.
         english_wordlist: Optional path to UTF-8 file with English words to skip.
+        keep_list: Optional path to UTF-8 file with words never to skip.
 
     Returns:
         Dictionary mapping each unique word to its frequency in the file.
@@ -127,6 +174,13 @@ def extract_file(
             with open(wl_path, encoding="utf-8") as f:
                 wordlist_set = {line.strip().lower() for line in f if line.strip()}
 
+    keep_set: set[str] = set()
+    if keep_list is not None:
+        kl_path = Path(keep_list)
+        if kl_path.is_file():
+            with open(kl_path, encoding="utf-8") as f:
+                keep_set = {line.strip().lower() for line in f if line.strip()}
+
     with open(file_path, encoding="utf-8-sig") as f:
         content = f.read()
 
@@ -137,6 +191,8 @@ def extract_file(
     lines_read = len(lines)
     tokens_seen = 0
     tokens_skipped_english = 0
+    tokens_skipped_inflection = 0
+    tokens_rescued_keep_list = 0
 
     for line_no, raw_line in enumerate(lines, start=1):
         line = raw_line.strip()
@@ -148,9 +204,17 @@ def extract_file(
 
         tokens_seen += len(raw_tokens)
         for token in raw_tokens:
-            if is_latin and wordlist_set and token.lower() in wordlist_set:
-                tokens_skipped_english += 1
-                continue
+            token_lower = token.lower()
+
+            if is_latin and keep_set and token_lower in keep_set:
+                tokens_rescued_keep_list += 1
+            elif is_latin and wordlist_set:
+                if token_lower in wordlist_set:
+                    tokens_skipped_english += 1
+                    continue
+                if is_english_inflection(token, wordlist_set):
+                    tokens_skipped_inflection += 1
+                    continue
 
             word_counts[token] += 1
             if open_lic and len(word_occurrences[token]) < 5:
@@ -191,6 +255,8 @@ def extract_file(
     print(
         f"Lines read: {lines_read}, Tokens seen: {tokens_seen}, "
         f"Tokens skipped as English: {tokens_skipped_english}, "
+        f"Tokens skipped as English inflection: {tokens_skipped_inflection}, "
+        f"Tokens rescued by keep list: {tokens_rescued_keep_list}, "
         f"Unique words stored: {len(persisted_counts)}"
     )
 
@@ -249,6 +315,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Path to UTF-8 English wordlist (one word per line)",
     )
     parser.add_argument(
+        "--keep-list",
+        type=str,
+        default=None,
+        help="Path to UTF-8 file of words never to skip (rescued words)",
+    )
+    parser.add_argument(
         "--db",
         type=str,
         default=DEFAULT_DB_PATH,
@@ -266,6 +338,7 @@ def main(argv: list[str] | None = None) -> int:
         filter_english=args.filter_english,
         gutenberg=args.gutenberg,
         english_wordlist=args.english_wordlist,
+        keep_list=args.keep_list,
     )
     print(f"Extracted {len(stats)} unique words from {args.txt_file}.")
     return 0

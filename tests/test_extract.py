@@ -1,7 +1,12 @@
 import sqlite3
 
 from bhasha_lib.db import add_source, init_db, search_word
-from bhasha_lib.extract import extract_file, main, strip_gutenberg
+from bhasha_lib.extract import (
+    extract_file,
+    is_english_inflection,
+    main,
+    strip_gutenberg,
+)
 
 
 def test_extract_file_frequencies(tmp_path):
@@ -406,3 +411,83 @@ def test_extract_cli_gutenberg_and_wordlist(tmp_path):
     )
     assert code == 0
     assert search_word("brai", db_path=db_file) is not None
+
+
+def test_is_english_inflection_rules():
+    """Verify inflection stem matching and minimum 3-letter stem constraint."""
+    wordlist = {"tiger", "walk", "stop", "run", "dance", "quick", "king", "a", "he"}
+
+    # "tigers", "walking", "stopped" should match stems in wordlist
+    assert is_english_inflection("tigers", wordlist) is True
+    assert is_english_inflection("walking", wordlist) is True
+    assert is_english_inflection("stopped", wordlist) is True
+
+    # Other common endings: 's, es, ed, d, ly, er, est
+    assert is_english_inflection("king's", wordlist) is True
+    assert is_english_inflection("quickly", wordlist) is True
+
+    # Short stems under 3 letters are NOT stripped
+    # e.g. "as" -> ending "s", stem "a" (len 1 < 3) -> False
+    assert is_english_inflection("as", wordlist) is False
+    # e.g. "he's" -> ending "'s", stem "he" (len 2 < 3) -> False
+    assert is_english_inflection("he's", wordlist) is False
+    # Non-English word not in wordlist
+    assert is_english_inflection("khithanaise", wordlist) is False
+
+
+def test_extract_with_keep_list_and_inflections(tmp_path):
+    """Verify inflections are skipped, keep-list rescues words, and DB updates."""
+    text_file = tmp_path / "bilingual_inflections.txt"
+    text_file.write_text(
+        "Two tigers were walking in the jungle.\n"
+        "The boy stopped near the river.\n"
+        "Âng ha mairong be khithânaise.\n",
+        encoding="utf-8",
+    )
+
+    wordlist = tmp_path / "wordlist.txt"
+    wordlist.write_text(
+        "tiger\nwalk\nstop\nin\nthe\nnear\ntwo\nbe\nha\n", encoding="utf-8"
+    )
+
+    # "be" and "ha" are in wordlist but also in keep list -> MUST be rescued and kept
+    keep_list = tmp_path / "keep_list.txt"
+    keep_list.write_text("be\nha\n", encoding="utf-8")
+
+    db_file = tmp_path / "inflection_test.sqlite"
+    init_db(db_file)
+    source_id = add_source(
+        title="Inflection Source",
+        license="public_domain",
+        db_path=db_file,
+    )
+
+    freqs = extract_file(
+        path=text_file,
+        db_path=db_file,
+        source_id=source_id,
+        license="public_domain",
+        script="latin",
+        english_wordlist=wordlist,
+        keep_list=keep_list,
+    )
+
+    # Inflected English words MUST be skipped
+    assert "tigers" not in freqs
+    assert "walking" not in freqs
+    assert "stopped" not in freqs
+
+    # Regular English words in wordlist MUST be skipped
+    assert "two" not in freqs
+    assert "near" not in freqs
+    assert "in" not in freqs
+
+    # Rescued Bodo words from keep list MUST be kept even though in wordlist
+    assert "be" in freqs
+    assert "ha" in freqs
+    assert search_word("be", db_path=db_file) is not None
+    assert search_word("ha", db_path=db_file) is not None
+
+    # Normal Bodo words kept
+    assert "khithânaise" in freqs
+    assert search_word("khithânaise", db_path=db_file) is not None

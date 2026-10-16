@@ -56,6 +56,10 @@ def __getattr__(name: str) -> Any:
         from bhasha_lib.extract import strip_gutenberg
 
         return strip_gutenberg
+    if name == "is_english_inflection":
+        from bhasha_lib.extract import is_english_inflection
+
+        return is_english_inflection
     if name == "load_aksharantar":
         from bhasha_lib.loaders.aksharantar import load_aksharantar
 
@@ -145,6 +149,7 @@ __all__ = [
     "init_db",
     "is_char_in_range",
     "is_devanagari",
+    "is_english_inflection",
     "is_english_word",
     "list_archive_files",
     "load_aksharantar",
