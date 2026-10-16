@@ -3,15 +3,17 @@
 *.sqlite
 *.db
 data/*.csv
+data/english_words.txt
 
 # Data archive directories
 data/archive/*/books/
 data/archive/*/folk_songs/
 data/archive/*/datasets/
 
-# Keep culture and history markdown files tracked
+# Keep culture, history, and book documentation files tracked
 !data/archive/*/culture/*.md
 !data/archive/*/history/*.md
+!data/archive/*/books/README.txt
 
 # Python caches, environments, and build artifacts
 __pycache__

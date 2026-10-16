@@ -52,6 +52,29 @@ def make_context_snippet(line: str, target_word: str, max_words: int = 15) -> st
     return " ".join(words[start:end])
 
 
+def strip_gutenberg(text: str) -> str:
+    """Remove Project Gutenberg header and footer from text.
+
+    Removes everything before (and including) the line containing '*** START OF'
+    and everything from the line containing '*** END OF' onward.
+    """
+    lines = text.splitlines(keepends=True)
+    start_idx = 0
+    end_idx = len(lines)
+
+    for i, line in enumerate(lines):
+        if "*** START OF" in line:
+            start_idx = i + 1
+            break
+
+    for i in range(start_idx, len(lines)):
+        if "*** END OF" in lines[i]:
+            end_idx = i
+            break
+
+    return "".join(lines[start_idx:end_idx])
+
+
 def extract_file(
     path: str | Path,
     db_path: str | Path = DEFAULT_DB_PATH,
@@ -60,6 +83,8 @@ def extract_file(
     script: str = "devanagari",
     mark_english: bool = True,
     filter_english: bool = False,
+    gutenberg: bool = False,
+    english_wordlist: str | Path | None = None,
 ) -> dict[str, int]:
     """Read a UTF-8 text file, tokenize lines, count frequencies, and store in DB.
 
@@ -76,6 +101,8 @@ def extract_file(
         mark_english: If True and script is latin, marks English words
             with dialect='english'.
         filter_english: If True and script is latin, skips inserting English words.
+        gutenberg: If True, strips Gutenberg header and footer.
+        english_wordlist: Optional path to UTF-8 file with English words to skip.
 
     Returns:
         Dictionary mapping each unique word to its frequency in the file.
@@ -93,20 +120,42 @@ def extract_file(
     word_occurrences: dict[str, list[tuple[int, str]]] = defaultdict(list)
     tokenizer_fn = tokenize_roman if is_latin else tokenize
 
+    wordlist_set: set[str] = set()
+    if english_wordlist is not None:
+        wl_path = Path(english_wordlist)
+        if wl_path.is_file():
+            with open(wl_path, encoding="utf-8") as f:
+                wordlist_set = {line.strip().lower() for line in f if line.strip()}
+
     with open(file_path, encoding="utf-8-sig") as f:
-        for line_no, raw_line in enumerate(f, start=1):
-            line = raw_line.strip()
-            if not line:
-                continue
-            tokens = tokenizer_fn(line)
-            if not tokens:
+        content = f.read()
+
+    if gutenberg:
+        content = strip_gutenberg(content)
+
+    lines = content.splitlines()
+    lines_read = len(lines)
+    tokens_seen = 0
+    tokens_skipped_english = 0
+
+    for line_no, raw_line in enumerate(lines, start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        raw_tokens = tokenizer_fn(line)
+        if not raw_tokens:
+            continue
+
+        tokens_seen += len(raw_tokens)
+        for token in raw_tokens:
+            if is_latin and wordlist_set and token.lower() in wordlist_set:
+                tokens_skipped_english += 1
                 continue
 
-            for token in tokens:
-                word_counts[token] += 1
-                if open_lic and len(word_occurrences[token]) < 5:
-                    snippet = make_context_snippet(line, token, max_words=15)
-                    word_occurrences[token].append((line_no, snippet))
+            word_counts[token] += 1
+            if open_lic and len(word_occurrences[token]) < 5:
+                snippet = make_context_snippet(line, token, max_words=15)
+                word_occurrences[token].append((line_no, snippet))
 
     persisted_counts: dict[str, int] = {}
     # Persist words and their frequencies
@@ -115,7 +164,14 @@ def extract_file(
         if is_eng and filter_english:
             continue
         dialect_tag = "english" if (is_latin and mark_english and is_eng) else None
-        add_word(word=word, freq=freq, dialect=dialect_tag, db_path=db_path)
+        add_word(
+            word=word,
+            freq=freq,
+            dialect=dialect_tag,
+            origin=None,
+            status="unverified",
+            db_path=db_path,
+        )
         persisted_counts[word] = freq
 
     # Persist occurrences if license permits
@@ -131,6 +187,12 @@ def extract_file(
                     context=context,
                     db_path=db_path,
                 )
+
+    print(
+        f"Lines read: {lines_read}, Tokens seen: {tokens_seen}, "
+        f"Tokens skipped as English: {tokens_skipped_english}, "
+        f"Unique words stored: {len(persisted_counts)}"
+    )
 
     return persisted_counts
 
@@ -175,6 +237,18 @@ def main(argv: list[str] | None = None) -> int:
         help="Exclude identified English words from being inserted into words table",
     )
     parser.add_argument(
+        "--gutenberg",
+        action="store_true",
+        default=False,
+        help="Strip Project Gutenberg header and footer",
+    )
+    parser.add_argument(
+        "--english-wordlist",
+        type=str,
+        default=None,
+        help="Path to UTF-8 English wordlist (one word per line)",
+    )
+    parser.add_argument(
         "--db",
         type=str,
         default=DEFAULT_DB_PATH,
@@ -190,6 +264,8 @@ def main(argv: list[str] | None = None) -> int:
         script=args.script,
         mark_english=args.mark_english,
         filter_english=args.filter_english,
+        gutenberg=args.gutenberg,
+        english_wordlist=args.english_wordlist,
     )
     print(f"Extracted {len(stats)} unique words from {args.txt_file}.")
     return 0

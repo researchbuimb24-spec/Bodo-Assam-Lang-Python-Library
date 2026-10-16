@@ -1,7 +1,7 @@
 import sqlite3
 
 from bhasha_lib.db import add_source, init_db, search_word
-from bhasha_lib.extract import extract_file, main
+from bhasha_lib.extract import extract_file, main, strip_gutenberg
 
 
 def test_extract_file_frequencies(tmp_path):
@@ -285,3 +285,124 @@ def test_extract_latin_filter_english(tmp_path):
     # Bodo words should be kept
     assert "gaham" in freqs
     assert search_word("gaham", db_path=db_file) is not None
+
+
+def test_strip_gutenberg():
+    """Verify strip_gutenberg removes header before START and footer from END onward."""
+    text = (
+        "The Project Gutenberg eBook\n"
+        "Some preface information\n"
+        "*** START OF THE PROJECT GUTENBERG EBOOK TALES ***\n"
+        "First story line.\n"
+        "Second story line.\n"
+        "*** END OF THE PROJECT GUTENBERG EBOOK TALES ***\n"
+        "Project Gutenberg license terms and conditions...\n"
+    )
+    stripped = strip_gutenberg(text)
+    assert "*** START OF" not in stripped
+    assert "*** END OF" not in stripped
+    assert "The Project Gutenberg eBook" not in stripped
+    assert "license terms" not in stripped
+    assert "First story line." in stripped
+    assert "Second story line." in stripped
+
+    # Text without markers remains untouched
+    plain = "Just plain text\nwith no markers\n"
+    assert strip_gutenberg(plain) == plain
+
+
+def test_extract_gutenberg_and_english_wordlist(tmp_path):
+    """Verify header/footer removal and wordlist filtering with origin/status check."""
+    fake_book = tmp_path / "fake_gutenberg_book.txt"
+    fake_book.write_text(
+        "Gutenberg Preamble Header text\n"
+        "*** START OF THE PROJECT GUTENBERG EBOOK FAKE ***\n"
+        "Âng brai burui man.\n"
+        "This is an english translation sentence.\n"
+        "Brai fainânai khithânaise.\n"
+        "*** END OF THE PROJECT GUTENBERG EBOOK FAKE ***\n"
+        "Gutenberg Postamble Full License text here\n",
+        encoding="utf-8",
+    )
+
+    wordlist = tmp_path / "tiny_wordlist.txt"
+    wordlist.write_text(
+        "this\nis\nan\nenglish\ntranslation\nsentence\n",
+        encoding="utf-8",
+    )
+
+    db_file = tmp_path / "fake_book.sqlite"
+    init_db(db_file)
+    source_id = add_source(
+        title="Fake Book",
+        license="public_domain",
+        db_path=db_file,
+    )
+
+    freqs = extract_file(
+        path=fake_book,
+        db_path=db_file,
+        source_id=source_id,
+        license="public_domain",
+        script="latin",
+        gutenberg=True,
+        english_wordlist=wordlist,
+    )
+
+    # Gutenberg header & footer words should NOT be present
+    assert "preamble" not in freqs
+    assert "postamble" not in freqs
+
+    # English words from wordlist should be skipped
+    assert "this" not in freqs
+    assert "translation" not in freqs
+    assert "sentence" not in freqs
+
+    # Bodo words should be stored
+    assert "brai" in freqs
+    assert "burui" in freqs
+    assert "khithânaise" in freqs
+
+    # Check origin = NULL and status = 'unverified'
+    w = search_word("brai", db_path=db_file)
+    assert w is not None
+    assert w["origin"] is None
+    assert w["status"] == "unverified"
+
+
+def test_extract_cli_gutenberg_and_wordlist(tmp_path):
+    """Verify CLI accepts --gutenberg and --english-wordlist."""
+    fake_book = tmp_path / "cli_book.txt"
+    fake_book.write_text(
+        "Header\n"
+        "*** START OF TEST ***\n"
+        "Gåthå brai gaham\n"
+        "*** END OF TEST ***\n"
+        "Footer\n",
+        encoding="utf-8",
+    )
+    wordlist = tmp_path / "cli_words.txt"
+    wordlist.write_text("test\nenglish\n", encoding="utf-8")
+
+    db_file = tmp_path / "cli_test.sqlite"
+    init_db(db_file)
+    source_id = add_source(title="CLI Book", license="public_domain", db_path=db_file)
+
+    code = main(
+        [
+            str(fake_book),
+            "--source-id",
+            str(source_id),
+            "--license",
+            "public_domain",
+            "--script",
+            "latin",
+            "--gutenberg",
+            "--english-wordlist",
+            str(wordlist),
+            "--db",
+            str(db_file),
+        ]
+    )
+    assert code == 0
+    assert search_word("brai", db_path=db_file) is not None

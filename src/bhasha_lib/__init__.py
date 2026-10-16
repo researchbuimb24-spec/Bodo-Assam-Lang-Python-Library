@@ -52,6 +52,10 @@ def __getattr__(name: str) -> Any:
         from bhasha_lib.extract import extract_file
 
         return extract_file
+    if name == "strip_gutenberg":
+        from bhasha_lib.extract import strip_gutenberg
+
+        return strip_gutenberg
     if name == "load_aksharantar":
         from bhasha_lib.loaders.aksharantar import load_aksharantar
 
@@ -153,6 +157,7 @@ __all__ = [
     "parse_unicode_range",
     "related",
     "search_word",
+    "strip_gutenberg",
     "tokenize",
     "tokenize_roman",
     "update_word_meaning",
