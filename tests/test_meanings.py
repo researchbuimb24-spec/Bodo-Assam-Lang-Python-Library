@@ -1,7 +1,15 @@
 import csv
 
-from bhasha_lib.db import add_word, get_connection, init_db, search_word
+from bhasha_lib.db import (
+    add_occurrence,
+    add_word,
+    get_connection,
+    init_db,
+    search_word,
+)
 from bhasha_lib.meanings import (
+    CONTEXT_1_COL,
+    CONTEXT_2_COL,
     CSV_FIELDNAMES,
     export_for_review,
     get_meanings_stats,
@@ -257,3 +265,181 @@ def test_stats_and_cli(tmp_path):
 
     # CLI import
     assert main(["import", str(csv_file), "--db", str(db_file)]) == 0
+
+
+def test_export_source_id_filtering(tmp_path):
+    """Verify --source-id filters only words with occurrences from that source."""
+    db_file = tmp_path / "source_filter.sqlite"
+    init_db(db_file)
+
+    add_word(word="word_source_10", db_path=db_file)
+    add_occurrence(
+        word="word_source_10",
+        source_id=10,
+        line_no=1,
+        context="Story line 1",
+        db_path=db_file,
+    )
+
+    add_word(word="word_source_2", db_path=db_file)
+    add_occurrence(
+        word="word_source_2",
+        source_id=2,
+        line_no=5,
+        context="Aksharantar line",
+        db_path=db_file,
+    )
+
+    add_word(word="word_no_occ", db_path=db_file)
+
+    csv_file = tmp_path / "src_10.csv"
+    count = export_for_review(db_file, csv_file, source_id=10)
+    assert count == 1
+
+    with open(csv_file, encoding="utf-8-sig", newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert len(rows) == 1
+    assert rows[0]["word"] == "word_source_10"
+
+
+def test_export_with_context_columns(tmp_path):
+    """Verify context columns are filled from occurrences and empty when none exist."""
+    db_file = tmp_path / "context_test.sqlite"
+    init_db(db_file)
+
+    add_word(word="word_with_ctx", db_path=db_file)
+    add_occurrence(
+        word="word_with_ctx",
+        source_id=10,
+        line_no=10,
+        context="First snippet",
+        db_path=db_file,
+    )
+    add_occurrence(
+        word="word_with_ctx",
+        source_id=10,
+        line_no=20,
+        context="Second snippet",
+        db_path=db_file,
+    )
+    add_occurrence(
+        word="word_with_ctx",
+        source_id=10,
+        line_no=30,
+        context="Third snippet",
+        db_path=db_file,
+    )
+
+    add_word(word="word_zero_ctx", db_path=db_file)
+
+    csv_file = tmp_path / "with_ctx.csv"
+    count = export_for_review(db_file, csv_file, with_context=True)
+    assert count == 2
+
+    with open(csv_file, encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        assert CONTEXT_1_COL in reader.fieldnames
+        assert CONTEXT_2_COL in reader.fieldnames
+        rows = {r["word"]: r for r in reader}
+
+    assert rows["word_with_ctx"][CONTEXT_1_COL] == "First snippet"
+    assert rows["word_with_ctx"][CONTEXT_2_COL] == "Second snippet"
+    assert rows["word_zero_ctx"][CONTEXT_1_COL] == ""
+    assert rows["word_zero_ctx"][CONTEXT_2_COL] == ""
+
+
+def test_export_min_freq_order_and_exclude_hyphen(tmp_path):
+    """Verify --min-freq, --order freq, and --exclude-hyphen."""
+    db_file = tmp_path / "freq_filter.sqlite"
+    init_db(db_file)
+
+    add_word(word="rare_word", freq=1, db_path=db_file)
+    add_word(word="common_word", freq=15, db_path=db_file)
+    add_word(word="mid_word", freq=5, db_path=db_file)
+    add_word(word="hyphen-word", freq=25, db_path=db_file)
+
+    csv_file = tmp_path / "freq_out.csv"
+    count = export_for_review(
+        db_file,
+        csv_file,
+        min_freq=3,
+        order="freq",
+        exclude_hyphen=True,
+    )
+    # rare_word (freq 1 < 3) and hyphen-word (contains '-') are excluded
+    assert count == 2
+
+    with open(csv_file, encoding="utf-8-sig", newline="") as f:
+        rows = list(csv.DictReader(f))
+
+    # Must be ordered by freq descending: common_word (15) before mid_word (5)
+    assert [r["word"] for r in rows] == ["common_word", "mid_word"]
+
+
+def test_import_with_context_columns_and_old_layout(tmp_path):
+    """Verify import ignores context columns and old layout still imports cleanly."""
+    db_file = tmp_path / "import_compat.sqlite"
+    init_db(db_file)
+
+    add_word(word="word_ctx_test", db_path=db_file)
+    add_occurrence(
+        word="word_ctx_test",
+        source_id=10,
+        line_no=1,
+        context="Permanent context",
+        db_path=db_file,
+    )
+
+    # 1. Export with context columns
+    csv_file = tmp_path / "compat_out.csv"
+    export_for_review(db_file, csv_file, with_context=True)
+
+    # 2. Fill in meaning in the exported CSV
+    with open(csv_file, encoding="utf-8-sig", newline="") as f:
+        rows = list(csv.DictReader(f))
+
+    rows[0]["meaning_hi"] = "अर्थ"
+    rows[0]["meaning_en"] = "meaning"
+    rows[0]["origin"] = "bodo"
+    rows[0]["verified_by"] = "Verifier A"
+    # Even if someone modifies the read-only context columns:
+    rows[0][CONTEXT_1_COL] = "Modified context in CSV"
+
+    with open(csv_file, mode="w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+
+    res = import_meanings(csv_file, db_file)
+    assert res["updated"] == 1
+
+    # Word meaning in DB is updated
+    w = search_word("word_ctx_test", db_path=db_file)
+    assert w["meaning_hi"] == "अर्थ"
+    assert w["status"] == "community"
+
+    # Context in DB occurrences table was NOT changed or corrupted
+    with get_connection(db_file) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT context FROM occurrences WHERE word = 'word_ctx_test'")
+        db_context = cursor.fetchone()[0]
+        assert db_context == "Permanent context"
+
+    # 3. Test old layout CSV (without context columns) still imports seamlessly
+    old_csv = tmp_path / "old_layout.csv"
+    add_word(word="old_layout_word", db_path=db_file)
+    with open(old_csv, mode="w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=CSV_FIELDNAMES)
+        writer.writeheader()
+        writer.writerow(
+            {
+                "word": "old_layout_word",
+                "meaning_hi": "पुराना",
+                "origin": "bodo",
+                "verified_by": "Verifier Old",
+            }
+        )
+    res_old = import_meanings(old_csv, db_file)
+    assert res_old["updated"] == 1
+    w_old = search_word("old_layout_word", db_path=db_file)
+    assert w_old["meaning_hi"] == "पुराना"

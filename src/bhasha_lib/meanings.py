@@ -45,17 +45,27 @@ def _resolve_paths(
     return Path(p1), Path(p2)
 
 
+CONTEXT_1_COL: str = "context_1 (do not edit)"
+CONTEXT_2_COL: str = "context_2 (do not edit)"
+
+
 def export_for_review(
     db_path: str | Path = DEFAULT_DB_PATH,
     csv_path: str | Path = "data/review_batch_1.csv",
     limit: int = 500,
     only_empty: bool = True,
     seed: int = 1,
+    source_id: int | None = None,
+    with_context: bool = False,
+    min_freq: int = 1,
+    order: str = "random",
+    exclude_hyphen: bool = False,
 ) -> int:
     """Export words needing review into a UTF-8 with BOM CSV template.
 
-    Picks words where meaning_hi and meaning_en are both empty in a random
-    but repeatable order based on seed.
+    Picks words where meaning_hi and meaning_en are both empty.
+    Supports filtering by source, minimum frequency, excluding hyphenated words,
+    sorting by frequency or repeatable random shuffle, and adding occurrence contexts.
 
     Args:
         db_path: Path to the SQLite database.
@@ -63,6 +73,11 @@ def export_for_review(
         limit: Maximum number of rows to export (default: 500).
         only_empty: Only include words with both meanings empty (default: True).
         seed: Random seed for deterministic reproducibility (default: 1).
+        source_id: If given, only includes words having an occurrence from this source.
+        with_context: If True, adds read-only context_1 and context_2 columns.
+        min_freq: Minimum frequency threshold (default: 1).
+        order: Ordering strategy: 'random' (default) or 'freq' (descending).
+        exclude_hyphen: If True, skips words containing a hyphen.
 
     Returns:
         Number of word rows exported.
@@ -73,48 +88,109 @@ def export_for_review(
     actual_csv_path.parent.mkdir(parents=True, exist_ok=True)
 
     conditions: list[str] = []
+    params: list[Any] = []
+
     if only_empty:
         conditions.append(
-            "(meaning_hi IS NULL OR meaning_hi = '') AND "
-            "(meaning_en IS NULL OR meaning_en = '')"
+            "(words.meaning_hi IS NULL OR words.meaning_hi = '') AND "
+            "(words.meaning_en IS NULL OR words.meaning_en = '')"
         )
 
+    if min_freq > 1:
+        conditions.append("words.freq >= ?")
+        params.append(min_freq)
+
+    if exclude_hyphen:
+        conditions.append("words.word NOT LIKE '%-%'")
+
+    if source_id is not None:
+        conditions.append(
+            "words.word IN (SELECT word FROM occurrences WHERE source_id = ?)"
+        )
+        params.append(source_id)
+
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+    if order.lower() == "freq":
+        order_clause = "ORDER BY words.freq DESC, words.word ASC"
+    else:
+        order_clause = "ORDER BY words.word ASC"
+
     query = f"""
-        SELECT word, roman, meaning_hi, meaning_en, pos, origin, dialect, verified_by
+        SELECT words.word, words.roman, words.meaning_hi, words.meaning_en,
+               words.pos, words.origin, words.dialect, words.verified_by, words.freq
         FROM words
         {where_clause}
-        ORDER BY word ASC
+        {order_clause}
     """
 
     with get_connection(actual_db_path) as conn:
         cursor = conn.cursor()
-        cursor.execute(query)
+        cursor.execute(query, params)
         candidate_rows = [dict(r) for r in cursor.fetchall()]
 
-    # Shuffle deterministically using repeatable seed
-    rng = random.Random(seed)
-    rng.shuffle(candidate_rows)
+    # If random ordering is requested, shuffle with reproducible seed
+    if order.lower() != "freq":
+        rng = random.Random(seed)
+        rng.shuffle(candidate_rows)
 
     selected_rows = candidate_rows[:limit] if limit is not None else candidate_rows
 
+    contexts_map: dict[str, list[str]] = {}
+    if with_context and selected_rows:
+        with get_connection(actual_db_path) as conn:
+            cursor = conn.cursor()
+            for r in selected_rows:
+                w = r["word"]
+                if source_id is not None:
+                    cursor.execute(
+                        """
+                        SELECT context FROM occurrences
+                        WHERE word = ?
+                        ORDER BY (CASE WHEN source_id = ? THEN 0 ELSE 1 END), rowid ASC
+                        LIMIT 2
+                        """,
+                        (w, source_id),
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        SELECT context FROM occurrences
+                        WHERE word = ?
+                        ORDER BY rowid ASC
+                        LIMIT 2
+                        """,
+                        (w,),
+                    )
+                snippets = [row[0] for row in cursor.fetchall() if row[0]]
+                contexts_map[w] = snippets
+
+    fieldnames = list(CSV_FIELDNAMES)
+    if with_context:
+        fieldnames.extend([CONTEXT_1_COL, CONTEXT_2_COL])
+
     with open(actual_csv_path, mode="w", encoding="utf-8-sig", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=CSV_FIELDNAMES)
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         for row in selected_rows:
-            writer.writerow(
-                {
-                    "word": row.get("word") or "",
-                    "roman": row.get("roman") or "",
-                    "meaning_hi": row.get("meaning_hi") or "",
-                    "meaning_en": row.get("meaning_en") or "",
-                    "pos": row.get("pos") or "",
-                    "origin": row.get("origin") or "",
-                    "dialect": row.get("dialect") or "",
-                    "verified_by": row.get("verified_by") or "",
-                    "notes": "",
-                }
-            )
+            w = row.get("word") or ""
+            row_dict: dict[str, Any] = {
+                "word": w,
+                "roman": row.get("roman") or "",
+                "meaning_hi": row.get("meaning_hi") or "",
+                "meaning_en": row.get("meaning_en") or "",
+                "pos": row.get("pos") or "",
+                "origin": row.get("origin") or "",
+                "dialect": row.get("dialect") or "",
+                "verified_by": row.get("verified_by") or "",
+                "notes": "",
+            }
+            if with_context:
+                snippets = contexts_map.get(w, [])
+                row_dict[CONTEXT_1_COL] = snippets[0] if len(snippets) > 0 else ""
+                row_dict[CONTEXT_2_COL] = snippets[1] if len(snippets) > 1 else ""
+
+            writer.writerow(row_dict)
 
     return len(selected_rows)
 
@@ -350,6 +426,37 @@ def main(argv: list[str] | None = None) -> int:
         default=1,
         help="Random seed for repeatable sampling (default: 1)",
     )
+    p_export.add_argument(
+        "--source-id",
+        type=int,
+        default=None,
+        help="Only words that have an occurrence from this source ID",
+    )
+    p_export.add_argument(
+        "--with-context",
+        action="store_true",
+        default=False,
+        help="Add read-only context_1 and context_2 columns to the CSV",
+    )
+    p_export.add_argument(
+        "--min-freq",
+        type=int,
+        default=1,
+        help="Only words with freq >= N (default: 1)",
+    )
+    p_export.add_argument(
+        "--order",
+        type=str,
+        choices=["random", "freq"],
+        default="random",
+        help="Ordering strategy: random (default) or freq (descending)",
+    )
+    p_export.add_argument(
+        "--exclude-hyphen",
+        action="store_true",
+        default=False,
+        help="Skip words that contain a hyphen",
+    )
 
     # import
     p_import = subparsers.add_parser(
@@ -380,6 +487,11 @@ def main(argv: list[str] | None = None) -> int:
             csv_path=args.out_csv,
             limit=args.limit,
             seed=args.seed,
+            source_id=args.source_id,
+            with_context=args.with_context,
+            min_freq=args.min_freq,
+            order=args.order,
+            exclude_hyphen=args.exclude_hyphen,
         )
         print(f"Exported {exported} words for review to '{args.out_csv}'.")
         return 0
