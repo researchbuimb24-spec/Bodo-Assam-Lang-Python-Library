@@ -2,11 +2,10 @@
 category: instrument
 title: Siphung
 region: Assam
-source: Boro culture (Wikipedia); Bodoland Tourism (tourism.bodoland.gov.in)
+source: Boro culture (Wikipedia)
+confidence: needs_check
 related_words: []
 ---
-Siphung Bodo samaj ki paramparik baans (bamboo) se bani bansuri hai. Aam
-bansuriyon mein chhah chhed hote hain, jabki Siphung ki vishesh pehchan iske
-paanch (5) chhed hain aur yeh aakar mein thodi lambi hoti hai. Iski aawaz
-gahri, madhur aur aatmik hoti hai. Siphung ka upyog Bathou puja ke Kherai
-nritya aur dukh-sukh ke lok-geeton mein pramukhta se hota hai.
+Siphung Bodo samaj ki lambi baans ki bansuri hai. Wikipedia ke mutabiq ismein
+sirf paanch chhed hote hain (uttar Bharat ki bansuri mein chhah hote hain),
+yeh us se kaafi lambi hoti hai aur isse kam sur (lower tone) nikalta hai.

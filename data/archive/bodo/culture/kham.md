@@ -2,11 +2,11 @@
 category: instrument
 title: Kham
 region: Assam
-source: Boro culture (Wikipedia); Bodoland Tourism (tourism.bodoland.gov.in)
+source: Boro culture (Wikipedia)
+confidence: needs_check
 related_words: []
 ---
-Kham Bodo samaj ka sabse mukhya aur pracheen percussion lok-vaadya (drum) hai.
-Yeh lakdi ke hollow frame se banta hai aur iske dono siron par chamda (leather)
-madha hota hai. Kham ko dono haathon se thapki dekar bajaya jaata hai. Yeh
-Bagurumba nritya, Kherai puja, Bwisagu utsav aur sabhi sanskritik karyakramon
-mein mukhya taal-vaadya ke roop mein anivarya hota hai.
+Kham Bodo samaj ka ek vaadya hai. Wikipedia ke mutabiq yeh lakdi aur bakri ki
+khaal se bana lamba dhol hai. Wahan Bodo vaadyon ki suchi mein Kham ke saath
+Siphung, Serja, Jotha, Jabsring, Khawang, Bingi aur Rege ginaaye gaye hain. Yeh
+kin avsaron par bajaya jaata hai, iska vivran abhi verified source se nahi mila.

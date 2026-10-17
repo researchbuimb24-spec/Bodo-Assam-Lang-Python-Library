@@ -2,11 +2,11 @@
 category: food
 title: Napham
 region: Assam
-source: Boro culture (Wikipedia); Bodo-Dimasa Archive
+source: Bodoland Tourism culture page (tourism.bodoland.gov.in)
+confidence: needs_check
 related_words: []
 ---
-Napham Bodo samaj ka ek vishisht aur behad swadisht fermented fish dish hai.
-Isme taazi chhoti machhliyon ko dhoop mein sukhakar, paramparik vanaspatiyon,
-masalon aur khaar ke sath peeskar mitti ke ghade ya bamboo cylinder mein
-hawa-band (airtight) karke mahino tak ferment kiya jaata hai. Napham ka teekha,
-chatpata aur vishisht aroma Bodo paramparik rasoi ki vishesh pehchan hai.
+Bodoland Tourism ne "Napham bathwn" ko mashhoor Bodo vyanjanon mein ginaa hai
+(Oma jwng narjwi aur Mwita Oma ke saath). Is vyanjan ki banaavat aur vidhi abhi
+kisi verified source se nahi li gayi; Bodo-Dimasa Archive ya kisi Bodo bolne
+wale se confirm karna baaki hai.

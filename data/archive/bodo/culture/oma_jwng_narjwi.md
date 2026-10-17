@@ -2,11 +2,12 @@
 category: food
 title: Oma jwng narjwi
 region: Assam
-source: Boro culture (Wikipedia); Bodo-Dimasa Archive
+source: Bodoland Tourism culture page (tourism.bodoland.gov.in); Boro culture (Wikipedia)
+confidence: needs_check
 related_words: []
 ---
-Oma jwng narjwi Bodo rasoi ka ek prasiddh aur pracheen paramparik vyanjan hai.
-Isme pork (oma) ko sukhi patsan (jute) ki pattiyon (narjwi) aur paramparik
-masalon ke saath dheemi aanch par pakaya jaata hai. Narjwi ki pattiyon ka halka
-kadwapan aur vishisht khushboo is pakwan ko lajawab swad aur aushadhiya gun
-pradan karti hai.
+Bodoland Tourism ne Oma jwng narjwi ko mashhoor Bodo vyanjanon mein ginaa hai.
+Wikipedia ke mutabiq "Narzi" sookhe jute (paat) ke patton se bana kadwa ras
+wala vyanjan hai, jisme sooar ka maans (Oma) ya meethe paani ki machhli saath
+pakayi ja sakti hai. Yeh dono ek hi vyanjan hain ya nahi, aur pakane ki vidhi
+kya hai, yeh abhi confirm nahi hai.
