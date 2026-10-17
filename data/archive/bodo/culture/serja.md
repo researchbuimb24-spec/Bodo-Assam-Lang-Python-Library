@@ -2,7 +2,7 @@
 category: instrument
 title: Serja
 region: Assam
-source: Boro culture (Wikipedia)
+source: Boro culture (Wikipedia); Bagurumba (rooftopapp.com art-wiki)
 confidence: needs_check
 related_words: []
 ---

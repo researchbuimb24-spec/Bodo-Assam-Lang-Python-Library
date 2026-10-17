@@ -2,10 +2,13 @@
 category: ritual
 title: Bathou
 region: Assam
-source: Bagurumba (rooftopapp.com art-wiki); Bodo-Dimasa Archive
+source: Boro culture (Wikipedia); Anahad Foundation blog "Gwjwna fwrni"; Bagurumba (rooftopapp.com art-wiki)
+confidence: needs_check
 related_words: []
 ---
-Bathou Bodo samaj ki apni mool dharmik parampara hai, jise Bathouism kaha
-jaata hai. Bodo log "Bwrai Bathou" ki puja karte hain. Ghar ke aangan mein
-Sijou ka paudha lagana is puja se juda hai. Bathou ki prarthana ke nritya
-Kherai ke roop mein hote hain.
+Wikipedia ke mutabiq Bodo log Bathou dharm ko maante hain (saath hi anya
+paramparaon ko bhi). Anahad ke blog mein ek Bodo lok-gayika ke hawale se likha
+hai ki "Ba" ka matlab paanch aur "Thou" ka matlab gehra hai, aur paanch ka
+sambandh prakriti ke paanch tatvon (prithvi, jal, vayu, agni, aakash) se hai.
+Rooftop art-wiki ke mutabiq Bathow Bwrai Bodo parampara ke sarvochch devta hain.
+Yeh sab kamzor sources se hai aur Bodo bolne wale se confirm karna baaki hai.
