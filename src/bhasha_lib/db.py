@@ -56,6 +56,9 @@ CREATE TABLE IF NOT EXISTS culture_items (
     related_words TEXT,
     source_id INTEGER,
     media_path TEXT,
+    year_start INTEGER,
+    year_end INTEGER,
+    confidence TEXT DEFAULT 'needs_check',
     FOREIGN KEY (source_id) REFERENCES sources(id)
 );
 """
@@ -104,6 +107,27 @@ def init_db(path: str | Path = DEFAULT_DB_PATH) -> Path:
             )
         if "verified_by" not in existing_cols:
             cursor.execute("ALTER TABLE words ADD COLUMN verified_by TEXT")
+
+        # Migration: add year_start, year_end, confidence to culture_items if missing
+        cursor.execute("PRAGMA table_info(culture_items)")
+        culture_cols = {row["name"] for row in cursor.fetchall()}
+
+        if "year_start" not in culture_cols:
+            cursor.execute("ALTER TABLE culture_items ADD COLUMN year_start INTEGER")
+        if "year_end" not in culture_cols:
+            cursor.execute("ALTER TABLE culture_items ADD COLUMN year_end INTEGER")
+        if "confidence" not in culture_cols:
+            cursor.execute(
+                "ALTER TABLE culture_items "
+                "ADD COLUMN confidence TEXT DEFAULT 'needs_check'"
+            )
+
+        # Safe migration: set confidence = 'needs_check'
+        # for rows where confidence IS NULL
+        cursor.execute(
+            "UPDATE culture_items SET confidence = 'needs_check' "
+            "WHERE confidence IS NULL"
+        )
 
     return Path(path)
 
@@ -306,9 +330,12 @@ def add_culture_item(
     related_words: str | None = None,
     source_id: int | None = None,
     media_path: str | None = None,
+    year_start: int | None = None,
+    year_end: int | None = None,
+    confidence: str | None = None,
     db_path: str | Path = DEFAULT_DB_PATH,
 ) -> int:
-    """Insert a cultural metadata item record."""
+    """Insert a cultural or historical metadata item record."""
     with get_connection(db_path) as conn:
         cursor = conn.cursor()
         cursor.execute(
@@ -320,9 +347,12 @@ def add_culture_item(
                 region,
                 related_words,
                 source_id,
-                media_path
+                media_path,
+                year_start,
+                year_end,
+                confidence
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 category,
@@ -332,6 +362,9 @@ def add_culture_item(
                 related_words,
                 source_id,
                 media_path,
+                year_start,
+                year_end,
+                confidence if confidence and confidence.strip() else "needs_check",
             ),
         )
         if cursor.lastrowid is None:

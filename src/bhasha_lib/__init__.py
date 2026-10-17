@@ -116,6 +116,22 @@ def __getattr__(name: str) -> Any:
         from bhasha_lib.folk_songs import verify_folk_songs_dir
 
         return verify_folk_songs_dir
+    if name == "lookup_term":
+        from bhasha_lib.lookup import lookup_term
+
+        return lookup_term
+    if name == "export_verified":
+        from bhasha_lib.export_verified import export_verified
+
+        return export_verified
+    if name == "get_timeline":
+        from bhasha_lib.timeline import get_timeline
+
+        return get_timeline
+    if name == "reset_confidence":
+        from bhasha_lib.culture import reset_confidence
+
+        return reset_confidence
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -136,6 +152,7 @@ __all__ = [
     "calculate_coverage",
     "export_for_review",
     "export_meanings_csv",
+    "export_verified",
     "extract_file",
     "filter_devanagari",
     "find_default_config",
@@ -143,6 +160,7 @@ __all__ = [
     "get_archive_path",
     "get_bodo_config",
     "get_meanings_stats",
+    "get_timeline",
     "import_meanings",
     "import_meanings_csv",
     "import_sources_csv",
@@ -158,9 +176,11 @@ __all__ = [
     "load_folk_song_file",
     "load_folk_songs_dir",
     "load_historical_book",
+    "lookup_term",
     "normalize",
     "parse_unicode_range",
     "related",
+    "reset_confidence",
     "search_word",
     "strip_gutenberg",
     "tokenize",

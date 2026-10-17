@@ -1,0 +1,10 @@
+---
+category: history
+title: Bodo Sahitya Sabha
+region: Assam
+year_start: 1952
+confidence: needs_check
+source: Bodo Sahitya Sabha (Wikipedia); Bodo Sahitya Sabha official site (bihung.org/about)
+related_words: []
+---
+Bodo Sahitya Sabha ki sthapana 16 November 1952 ko Basugaon (Kokrajhar zila, Assam) mein hui. Iske pehle adhyaksh Joy Bhadra Hagjer the aur pehle mahasachiv Sonaram Thaosen. Sabha ka maqsad Bodo bhasha aur sahitya ko badhana aur bachana hai. Sthapana ke baad Sabha ne Bodo ko padhaai ka madhyam banane ke liye December 1952 se aandolan shuru kiya. 18 May 1963 ko Assam ke mukhyamantri Bimala Prasad Chaliha ne Kokrajhar mein Bodo ko prathamik star par padhaai ka madhyam banane ki ghoshna ki; Sabha is din ko "Bodo Medium Implementation Day" ke roop mein manati hai. Maadhyamik star par Bodo 1968 mein shuru hui.

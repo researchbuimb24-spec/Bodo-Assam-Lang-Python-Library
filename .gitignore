@@ -4,6 +4,7 @@
 *.db
 data/*.csv
 data/english_words.txt
+data/export_*/
 
 # Data archive directories
 data/archive/*/books/

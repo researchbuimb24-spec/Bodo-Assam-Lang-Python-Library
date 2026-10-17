@@ -11,7 +11,6 @@ import yaml
 
 from bhasha_lib.db import (
     DEFAULT_DB_PATH,
-    add_culture_item,
     get_connection,
     init_db,
     search_word,
@@ -64,21 +63,55 @@ def parse_culture_markdown(
     return header_data, body
 
 
+class CultureLoadResult(list):
+    """List of newly inserted item IDs with summary counts."""
+
+    def __init__(
+        self,
+        inserted: list[int] | None = None,
+        updated: list[int] | None = None,
+        unchanged: list[int] | None = None,
+    ):
+        self.inserted: list[int] = inserted or []
+        self.updated: list[int] = updated or []
+        self.unchanged: list[int] = unchanged or []
+        super().__init__(self.inserted)
+
+    @property
+    def summary(self) -> dict[str, int]:
+        return {
+            "inserted": len(self.inserted),
+            "updated": len(self.updated),
+            "unchanged": len(self.unchanged),
+        }
+
+
+def reset_confidence(db_path: str | Path = DEFAULT_DB_PATH) -> int:
+    """Set confidence to 'needs_check' for all culture_items rows."""
+    init_db(db_path)
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE culture_items SET confidence = 'needs_check'")
+        count = cursor.rowcount
+    print(f"Reset confidence to 'needs_check' for {count} culture item(s).")
+    return count
+
+
 def load_culture_dir(
     dir_path: str | Path,
     db_path: str | Path = DEFAULT_DB_PATH,
-) -> list[int]:
+) -> CultureLoadResult:
     """Read every .md file in the directory and load culture records into DB.
 
     1. Parses YAML header and description body.
     2. Rejects files missing category, title, source, or description.
-    3. Finds or creates a row in sources table
-       (type='culture_note', license='own_words').
-    4. Skips duplicate entries (same title and category).
+    3. Finds or creates a row in sources table.
+    4. If row with same title and category exists, updates its fields.
     5. Inserts new culture items via add_culture_item().
+    6. Prints summary of inserted, updated, and unchanged items.
 
     Returns:
-        List of inserted culture item IDs.
+        CultureLoadResult containing inserted, updated, and unchanged IDs.
     """
     directory = Path(dir_path)
     if not directory.is_dir():
@@ -86,11 +119,15 @@ def load_culture_dir(
 
     init_db(db_path)
     inserted_ids: list[int] = []
+    updated_ids: list[int] = []
+    unchanged_ids: list[int] = []
 
     md_files = sorted(directory.glob("*.md"))
     for file_path in md_files:
         text = file_path.read_text(encoding="utf-8")
-        header, description = parse_culture_markdown(text, file_name=file_path.name)
+        header, description = parse_culture_markdown(
+            text, file_name=file_path.name
+        )
 
         category = str(header.get("category") or "").strip()
         title = str(header.get("title") or "").strip()
@@ -116,21 +153,42 @@ def load_culture_dir(
                 f"File '{file_path.name}' is rejected: Missing description text."
             )
 
-        # Check for existing duplicate (same title and category)
+        # Optional timeline and verification metadata
+        year_start_raw = header.get("year_start")
+        year_end_raw = header.get("year_end")
+        confidence_raw = header.get("confidence")
+
+        year_start = None
+        if year_start_raw is not None:
+            try:
+                year_start = int(year_start_raw)
+            except (ValueError, TypeError):
+                year_start = None
+
+        year_end = None
+        if year_end_raw is not None:
+            try:
+                year_end = int(year_end_raw)
+            except (ValueError, TypeError):
+                year_end = None
+
+        confidence = (
+            str(confidence_raw).strip() if confidence_raw else "needs_check"
+        )
+
         with get_connection(db_path) as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                "SELECT id FROM culture_items WHERE title = ? AND category = ?",
-                (title, category),
-            )
-            if cursor.fetchone() is not None:
-                # Skip duplicate
-                continue
 
             # Find or create source row
+            note_type = (
+                f"{category}_note"
+                if category in ("history", "culture")
+                else "culture_note"
+            )
             cursor.execute(
-                "SELECT id FROM sources WHERE title = ? AND type = 'culture_note'",
-                (source,),
+                "SELECT id FROM sources "
+                "WHERE title = ? AND (type = ? OR type = 'culture_note')",
+                (source, note_type),
             )
             source_row = cursor.fetchone()
             if source_row is not None:
@@ -139,30 +197,135 @@ def load_culture_dir(
                 cursor.execute(
                     """
                     INSERT INTO sources (title, type, license, file_path)
-                    VALUES (?, 'culture_note', 'own_words', ?)
+                    VALUES (?, ?, 'own_words', ?)
                     """,
-                    (source, str(file_path)),
+                    (source, note_type, str(file_path)),
                 )
                 source_id = int(cursor.lastrowid)
 
-        # Format related words as comma-separated string
-        if isinstance(related_words, list):
-            related_words_str = ",".join(str(w).strip() for w in related_words)
-        else:
-            related_words_str = str(related_words).strip()
+            # Format related words as comma-separated string
+            if isinstance(related_words, list):
+                related_words_str = ",".join(
+                    str(w).strip() for w in related_words
+                )
+            else:
+                related_words_str = str(related_words).strip()
+            related_words_val = (
+                related_words_str if related_words_str else None
+            )
+            region_val = region if region else None
 
-        item_id = add_culture_item(
-            category=category,
-            title=title,
-            description=description,
-            region=region if region else None,
-            related_words=related_words_str,
-            source_id=source_id,
-            db_path=db_path,
-        )
-        inserted_ids.append(item_id)
+            # Check for existing duplicate (same title and category)
+            cursor.execute(
+                """
+                SELECT id, description, region, related_words,
+                       year_start, year_end, confidence, source_id
+                FROM culture_items
+                WHERE title = ? AND category = ?
+                """,
+                (title, category),
+            )
+            existing = cursor.fetchone()
 
-    return inserted_ids
+            if existing is not None:
+                item_id = int(existing["id"])
+                exist_desc = existing["description"] or ""
+                exist_reg = existing["region"] or ""
+                exist_rw = existing["related_words"] or ""
+                exist_ys = existing["year_start"]
+                exist_ye = existing["year_end"]
+                exist_conf = existing["confidence"] or "needs_check"
+                exist_src = existing["source_id"]
+
+                cur_desc = description or ""
+                cur_reg = region_val or ""
+                cur_rw = related_words_val or ""
+                cur_ys = year_start
+                cur_ye = year_end
+                cur_conf = confidence
+                cur_src = source_id
+
+                is_changed = (
+                    exist_desc != cur_desc
+                    or exist_reg != cur_reg
+                    or exist_rw != cur_rw
+                    or exist_ys != cur_ys
+                    or exist_ye != cur_ye
+                    or exist_conf != cur_conf
+                    or exist_src != cur_src
+                )
+
+                if is_changed:
+                    cursor.execute(
+                        """
+                        UPDATE culture_items SET
+                            description = ?,
+                            region = ?,
+                            related_words = ?,
+                            year_start = ?,
+                            year_end = ?,
+                            confidence = ?,
+                            source_id = ?
+                        WHERE id = ?
+                        """,
+                        (
+                            description,
+                            region_val,
+                            related_words_val,
+                            year_start,
+                            year_end,
+                            confidence,
+                            source_id,
+                            item_id,
+                        ),
+                    )
+                    updated_ids.append(item_id)
+                else:
+                    unchanged_ids.append(item_id)
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO culture_items (
+                        category,
+                        title,
+                        description,
+                        region,
+                        related_words,
+                        source_id,
+                        media_path,
+                        year_start,
+                        year_end,
+                        confidence
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        category,
+                        title,
+                        description,
+                        region_val,
+                        related_words_val,
+                        source_id,
+                        None,
+                        year_start,
+                        year_end,
+                        confidence,
+                    ),
+                )
+                if cursor.lastrowid is None:
+                    raise RuntimeError("Failed to insert culture item.")
+                item_id = int(cursor.lastrowid)
+                inserted_ids.append(item_id)
+
+    print(
+        f"Culture items: {len(inserted_ids)} inserted, "
+        f"{len(updated_ids)} updated, {len(unchanged_ids)} unchanged."
+    )
+    return CultureLoadResult(
+        inserted=inserted_ids,
+        updated=updated_ids,
+        unchanged=unchanged_ids,
+    )
 
 
 def related(
@@ -190,7 +353,8 @@ def related(
             """
             SELECT
                 id, category, title, description, region,
-                related_words, source_id, media_path
+                related_words, source_id, media_path,
+                year_start, year_end, confidence
             FROM culture_items
             WHERE title LIKE ? ESCAPE '\\'
                OR description LIKE ? ESCAPE '\\'
@@ -213,9 +377,13 @@ def related(
 def main(argv: list[str] | None = None) -> int:
     """Command-line interface entry point."""
     parser = argparse.ArgumentParser(
-        description="Load culture markdown files into SQLite database."
+        description="Load culture markdown files or reset confidence."
     )
-    parser.add_argument("dir", type=str, help="Directory containing culture .md files")
+    parser.add_argument(
+        "target",
+        type=str,
+        help="Directory containing culture .md files OR 'reset-confidence'",
+    )
     parser.add_argument(
         "--db",
         type=str,
@@ -224,8 +392,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    loaded = load_culture_dir(args.dir, db_path=args.db)
-    print(f"Loaded {len(loaded)} culture item(s) from {args.dir}.")
+    if args.target == "reset-confidence":
+        reset_confidence(db_path=args.db)
+        return 0
+
+    load_culture_dir(args.target, db_path=args.db)
     return 0
 
 

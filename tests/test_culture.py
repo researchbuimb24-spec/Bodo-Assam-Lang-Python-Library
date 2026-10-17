@@ -161,3 +161,176 @@ Kherai is a sacred religious dance performed during Kherai puja.
 
     res = related("Kherai", db_path=db_file)
     assert len(res["culture_items"]) == 1
+
+
+def test_culture_default_confidence_is_needs_check(tmp_path):
+    """Verify culture file without confidence key defaults to 'needs_check'."""
+    culture_dir = tmp_path / "default_conf"
+    culture_dir.mkdir()
+
+    content = """---
+category: attire
+title: Aronai Scarf
+region: Bodoland
+source: Textile Survey
+related_words: []
+---
+Traditional scarf of honour in Bodo community.
+"""
+    (culture_dir / "aronai.md").write_text(content, encoding="utf-8")
+
+    db_file = tmp_path / "default_conf.sqlite"
+    init_db(db_file)
+
+    load_culture_dir(culture_dir, db_path=db_file)
+
+    res = related("Aronai", db_path=db_file)
+    assert len(res["culture_items"]) == 1
+    assert res["culture_items"][0]["confidence"] == "needs_check"
+
+
+def test_culture_explicit_confidence_verified(tmp_path):
+    """Verify culture file with confidence: verified is stored as verified."""
+    culture_dir = tmp_path / "verified_conf"
+    culture_dir.mkdir()
+
+    content = """---
+category: festival
+title: Bwisagu New Year
+region: Assam
+confidence: verified
+source: Verified Cultural Board
+related_words: []
+---
+Celebrated during Bodo new year.
+"""
+    (culture_dir / "bwisagu.md").write_text(content, encoding="utf-8")
+
+    db_file = tmp_path / "verified_conf.sqlite"
+    init_db(db_file)
+
+    load_culture_dir(culture_dir, db_path=db_file)
+
+    res = related("Bwisagu", db_path=db_file)
+    assert len(res["culture_items"]) == 1
+    assert res["culture_items"][0]["confidence"] == "verified"
+
+
+def test_editing_file_and_reloading_updates_without_duplicate(tmp_path):
+    """Verify editing a file and reloading updates the row without duplicates."""
+    culture_dir = tmp_path / "reload_test"
+    culture_dir.mkdir()
+    md_file = culture_dir / "item.md"
+
+    md_file.write_text(
+        """---
+category: history
+title: Historical Event
+region: Assam
+year_start: 1950
+confidence: needs_check
+source: Initial Source
+related_words: []
+---
+Initial draft description.
+""",
+        encoding="utf-8",
+    )
+
+    db_file = tmp_path / "reload.sqlite"
+    init_db(db_file)
+
+    res1 = load_culture_dir(culture_dir, db_path=db_file)
+    assert res1.summary["inserted"] == 1
+    assert res1.summary["updated"] == 0
+    assert res1.summary["unchanged"] == 0
+
+    # Reload without edits -> unchanged
+    res2 = load_culture_dir(culture_dir, db_path=db_file)
+    assert res2.summary["inserted"] == 0
+    assert res2.summary["updated"] == 0
+    assert res2.summary["unchanged"] == 1
+
+    # Edit the file: update description, year_end, and confidence
+    md_file.write_text(
+        """---
+category: history
+title: Historical Event
+region: Assam
+year_start: 1950
+year_end: 1960
+confidence: verified
+source: Updated Source
+related_words:
+  - history
+---
+Revised and verified description text.
+""",
+        encoding="utf-8",
+    )
+
+    res3 = load_culture_dir(culture_dir, db_path=db_file)
+    assert res3.summary["inserted"] == 0
+    assert res3.summary["updated"] == 1
+    assert res3.summary["unchanged"] == 0
+
+    # Ensure no duplicate row was created in database
+    items = related("Historical", db_path=db_file)["culture_items"]
+    assert len(items) == 1
+    item = items[0]
+    assert item["description"] == "Revised and verified description text."
+    assert item["year_end"] == 1960
+    assert item["confidence"] == "verified"
+    assert item["related_words"] == "history"
+
+
+def test_reset_confidence_sets_all_rows_to_needs_check(tmp_path):
+    """Verify reset-confidence command updates all rows to 'needs_check'."""
+    culture_dir = tmp_path / "reset_test"
+    culture_dir.mkdir()
+
+    (culture_dir / "item1.md").write_text(
+        """---
+category: dance
+title: Dance One
+region: Assam
+confidence: verified
+source: Source 1
+related_words: []
+---
+Description 1
+""",
+        encoding="utf-8",
+    )
+    (culture_dir / "item2.md").write_text(
+        """---
+category: dance
+title: Dance Two
+region: Assam
+confidence: verified
+source: Source 2
+related_words: []
+---
+Description 2
+""",
+        encoding="utf-8",
+    )
+
+    db_file = tmp_path / "reset.sqlite"
+    init_db(db_file)
+    load_culture_dir(culture_dir, db_path=db_file)
+
+    # Verify both are initially 'verified'
+    items_before = related("Dance", db_path=db_file)["culture_items"]
+    assert len(items_before) == 2
+    assert all(i["confidence"] == "verified" for i in items_before)
+
+    # Execute reset-confidence CLI
+    exit_code = main(["reset-confidence", "--db", str(db_file)])
+    assert exit_code == 0
+
+    # Verify all are now 'needs_check'
+    items_after = related("Dance", db_path=db_file)["culture_items"]
+    assert len(items_after) == 2
+    assert all(i["confidence"] == "needs_check" for i in items_after)
+
