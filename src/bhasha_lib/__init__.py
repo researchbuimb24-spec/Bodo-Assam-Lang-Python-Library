@@ -35,6 +35,12 @@ from bhasha_lib.db import (
 )
 from bhasha_lib.english import BODO_PROTECTED_WORDS, is_english_word
 from bhasha_lib.tokenizer import normalize, tokenize, tokenize_roman
+from bhasha_lib.translator import (
+    BodoTranslator,
+    detect,
+    translate,
+    translate_batch,
+)
 from bhasha_lib.unicode import (
     calculate_coverage,
     filter_devanagari,
@@ -146,6 +152,7 @@ def __getattr__(name: str) -> Any:
 __all__ = [
     "ARCHIVE_CATEGORIES",
     "BODO_PROTECTED_WORDS",
+    "BodoTranslator",
     "ConsentError",
     "ConsentRecord",
     "ConsentStatus",
@@ -159,6 +166,7 @@ __all__ = [
     "audit_culture_and_history",
     "bootstrap_seed_meanings",
     "calculate_coverage",
+    "detect",
     "export_for_review",
     "export_meanings_csv",
     "export_verified",
@@ -194,6 +202,8 @@ __all__ = [
     "strip_gutenberg",
     "tokenize",
     "tokenize_roman",
+    "translate",
+    "translate_batch",
     "update_word_meaning",
     "validate_consent_dict",
     "validate_folk_song_header",

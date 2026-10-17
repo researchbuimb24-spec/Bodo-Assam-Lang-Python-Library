@@ -31,6 +31,7 @@ pip install -e ".[dev]"
 ```python
 from bhasha_lib import (
     add_source,
+    detect,
     extract_file,
     init_db,
     load_aksharantar,
@@ -38,7 +39,23 @@ from bhasha_lib import (
     related,
     tokenize,
     tokenize_roman,
+    translate,
+    translate_batch,
 )
+
+# 0. Translate Any Language into Bodo (Assam Region)
+# Online multi-engine with automatic offline SQLite fallback
+bodo_text = translate("Welcome to Assam")
+print(bodo_text)
+
+# Translate offline using local lexicon & morphology
+print(translate("water", offline=True))  # Output: दै
+
+# Translate Bodo back to English or Hindi
+print(translate("दै", target="en"))  # Output: water
+
+# Detect language code
+print(detect("मानसिफोर गामआव दं"))  # Output: brx
 
 # 1. Initialize Database
 init_db("data/lexicon.sqlite")
@@ -90,6 +107,16 @@ print(res["culture_items"])
 ### Command Line Tools
 
 ```bash
+# Translate any text to Bodo (Assam region)
+bodo-translate "Welcome to Assam"
+python -m bhasha_lib "Hello world"
+
+# Translate offline using local lexicon & Bodo morphological rules
+bodo-translate "water" --offline
+
+# Detect language of text
+bodo-translate "मानसिफोर गामआव दं" --detect
+
 # Extract words from text (Devanagari)
 python -m bhasha_lib.extract document.txt --source-id 1 --license public_domain
 
