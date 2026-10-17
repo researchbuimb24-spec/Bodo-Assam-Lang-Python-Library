@@ -334,3 +334,103 @@ Description 2
     assert len(items_after) == 2
     assert all(i["confidence"] == "needs_check" for i in items_after)
 
+
+def test_folk_song_without_consent_document_refused(tmp_path, capsys):
+    """Verify folk song without consent_document is refused with clear error."""
+    culture_dir = tmp_path / "folk_songs"
+    culture_dir.mkdir()
+
+    (culture_dir / "song_no_doc.md").write_text(
+        """---
+category: folk_song
+title: Refused Song 1
+source: Archive Source Ref
+contributor: Field Collector
+permission_type: written
+permission_date: 2026-03-01
+source_recording: Tape collection recorded in village 1998
+---
+Song description.
+""",
+        encoding="utf-8",
+    )
+
+    db_file = tmp_path / "fs_guard1.sqlite"
+    init_db(db_file)
+
+    res = load_culture_dir(culture_dir, db_path=db_file)
+    assert res.summary["inserted"] == 0
+
+    out = capsys.readouterr().out
+    assert "Refused folk song 'song_no_doc.md'" in out
+    assert "Missing required 'consent_document'" in out
+
+
+def test_folk_song_consent_document_not_existing_refused(tmp_path, capsys):
+    """Verify folk song with non-existent consent_document is refused."""
+    culture_dir = tmp_path / "folk_songs"
+    culture_dir.mkdir()
+
+    (culture_dir / "song_missing_doc.md").write_text(
+        """---
+category: folk_song
+title: Refused Song 2
+source: Archive Source Ref
+consent_document: non_existent_doc.pdf
+contributor: Field Collector
+permission_type: written
+permission_date: 2026-03-01
+source_recording: Tape collection recorded in village 1998
+---
+Song description.
+""",
+        encoding="utf-8",
+    )
+
+    db_file = tmp_path / "fs_guard2.sqlite"
+    init_db(db_file)
+
+    res = load_culture_dir(culture_dir, db_path=db_file)
+    assert res.summary["inserted"] == 0
+
+    out = capsys.readouterr().out
+    assert "Refused folk song 'song_missing_doc.md'" in out
+    assert "does not exist on disk" in out
+
+
+def test_folk_song_with_all_keys_accepted(tmp_path):
+    """Verify folk song with all keys and existing consent file is accepted."""
+    culture_dir = tmp_path / "folk_songs"
+    culture_dir.mkdir()
+
+    # Create actual consent document on disk
+    consent_file = tmp_path / "signed_consent.pdf"
+    consent_file.write_bytes(b"%PDF-1.4 dummy consent content")
+
+    (culture_dir / "valid_song.md").write_text(
+        f"""---
+category: folk_song
+title: Accepted Song
+source: Archive of Folk Traditions
+consent_document: {consent_file.as_posix()}
+contributor: Field Collector
+permission_type: written
+permission_date: 2026-03-01
+source_recording: Tape collection recorded in village 1998
+---
+Song description.
+""",
+        encoding="utf-8",
+    )
+
+    db_file = tmp_path / "fs_guard3.sqlite"
+    init_db(db_file)
+
+    res = load_culture_dir(culture_dir, db_path=db_file)
+    assert res.summary["inserted"] == 1
+
+    items = related("Accepted Song", db_path=db_file)["culture_items"]
+    assert len(items) == 1
+    assert items[0]["title"] == "Accepted Song"
+
+

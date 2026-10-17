@@ -132,6 +132,14 @@ def __getattr__(name: str) -> Any:
         from bhasha_lib.culture import reset_confidence
 
         return reset_confidence
+    if name == "audit_culture_and_history":
+        from bhasha_lib.audit import audit_culture_and_history
+
+        return audit_culture_and_history
+    if name == "validate_folk_song_header":
+        from bhasha_lib.culture import validate_folk_song_header
+
+        return validate_folk_song_header
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -148,6 +156,7 @@ __all__ = [
     "add_occurrence",
     "add_source",
     "add_word",
+    "audit_culture_and_history",
     "bootstrap_seed_meanings",
     "calculate_coverage",
     "export_for_review",
@@ -187,6 +196,7 @@ __all__ = [
     "tokenize_roman",
     "update_word_meaning",
     "validate_consent_dict",
+    "validate_folk_song_header",
     "verify_archive_structure",
     "verify_folk_songs_dir",
 ]

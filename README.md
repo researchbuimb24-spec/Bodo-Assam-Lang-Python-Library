@@ -201,6 +201,8 @@ bhasha-lib/
 
 ## Contributing
 
+Cultural notes and folk songs need a real source and, for folk songs, a real consent document, and the project does not accept entries without them.
+
 We welcome community contributions to expand regional language preservation.
 
 ### Adding a Culture Note

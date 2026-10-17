@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime
 import sys
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,86 @@ from bhasha_lib.db import (
     init_db,
     search_word,
 )
+
+VALID_PERMISSION_TYPES: frozenset[str] = frozenset(
+    {"written", "recorded", "public_domain"}
+)
+
+
+def validate_folk_song_header(
+    header: dict[str, Any],
+    file_path: Path,
+    project_root: Path | None = None,
+) -> list[str]:
+    """Validate folk song header keys and consent requirements.
+
+    Returns:
+        List of failure reasons. Empty if valid.
+    """
+    failures: list[str] = []
+
+    # 1. consent_document: must exist on disk (relative to root/cwd/file)
+    consent_doc = header.get("consent_document")
+    if not consent_doc or not str(consent_doc).strip():
+        failures.append("Missing required 'consent_document' key")
+    else:
+        doc_str = str(consent_doc).strip()
+        doc_path = Path(doc_str)
+        root = project_root if project_root is not None else Path.cwd()
+        exists = (
+            doc_path.is_file()
+            or (root / doc_path).is_file()
+            or (file_path.parent / doc_path).is_file()
+        )
+        if not exists:
+            failures.append(
+                f"'consent_document' file does not exist on disk: {doc_str}"
+            )
+
+    # 2. contributor
+    contributor = header.get("contributor")
+    if not contributor or not str(contributor).strip():
+        failures.append("Missing required 'contributor' key")
+
+    # 3. permission_type (written, recorded, public_domain)
+    perm_type = header.get("permission_type")
+    if (
+        not perm_type
+        or str(perm_type).strip().lower() not in VALID_PERMISSION_TYPES
+    ):
+        failures.append(
+            "Invalid or missing 'permission_type' (must be written, recorded, "
+            f"or public_domain): {perm_type}"
+        )
+
+    # 4. permission_date (YYYY-MM-DD)
+    perm_date = header.get("permission_date")
+    if not perm_date:
+        failures.append("Missing required 'permission_date' key")
+    else:
+        valid_date = False
+        if isinstance(perm_date, (datetime.date, datetime.datetime)):
+            valid_date = True
+        else:
+            try:
+                datetime.datetime.strptime(str(perm_date).strip(), "%Y-%m-%d")
+                valid_date = True
+            except ValueError:
+                valid_date = False
+        if not valid_date:
+            failures.append(
+                f"Invalid 'permission_date' format (must be YYYY-MM-DD): {perm_date}"
+            )
+
+    # 5. source_recording (free text, at least 15 characters)
+    source_rec = header.get("source_recording")
+    if not source_rec or len(str(source_rec).strip()) < 15:
+        failures.append(
+            "Missing or too short 'source_recording' "
+            "(must be free text with at least 15 characters)"
+        )
+
+    return failures
 
 
 def _escape_like(text: str, escape_char: str = "\\") -> str:
@@ -130,6 +211,17 @@ def load_culture_dir(
         )
 
         category = str(header.get("category") or "").strip()
+        is_folk_song = (category == "folk_song") or any(
+            p.lower() == "folk_songs" for p in file_path.parts
+        )
+        if is_folk_song:
+            failures = validate_folk_song_header(header, file_path)
+            if failures:
+                print(
+                    f"Refused folk song '{file_path.name}': {'; '.join(failures)}"
+                )
+                continue
+
         title = str(header.get("title") or "").strip()
         source = str(header.get("source") or "").strip()
         region = str(header.get("region") or "").strip()
