@@ -1,5 +1,6 @@
 import pytest
 
+from bhasha_lib.consent import add_consent
 from bhasha_lib.culture import load_culture_dir, main, related
 from bhasha_lib.db import add_word, init_db
 
@@ -199,6 +200,8 @@ category: festival
 title: Bwisagu New Year
 region: Assam
 confidence: verified
+verified_by: Maintainer
+verified_on: 2026-01-01
 source: Verified Cultural Board
 related_words: []
 ---
@@ -260,6 +263,8 @@ region: Assam
 year_start: 1950
 year_end: 1960
 confidence: verified
+verified_by: Maintainer
+verified_on: 2026-01-01
 source: Updated Source
 related_words:
   - history
@@ -295,6 +300,8 @@ category: dance
 title: Dance One
 region: Assam
 confidence: verified
+verified_by: Maintainer
+verified_on: 2026-01-01
 source: Source 1
 related_words: []
 ---
@@ -308,6 +315,8 @@ category: dance
 title: Dance Two
 region: Assam
 confidence: verified
+verified_by: Maintainer
+verified_on: 2026-01-01
 source: Source 2
 related_words: []
 ---
@@ -403,9 +412,19 @@ def test_folk_song_with_all_keys_accepted(tmp_path):
     culture_dir = tmp_path / "folk_songs"
     culture_dir.mkdir()
 
-    # Create actual consent document on disk
+    # Create actual consent document on disk and register it
     consent_file = tmp_path / "signed_consent.pdf"
     consent_file.write_bytes(b"%PDF-1.4 dummy consent content")
+
+    reg_file = tmp_path / "register.csv"
+    add_consent(
+        file_path=consent_file,
+        contributor="Field Collector",
+        permission_type="written",
+        date_str="2026-03-01",
+        scope="Archive of Folk Traditions",
+        register_path=reg_file,
+    )
 
     (culture_dir / "valid_song.md").write_text(
         f"""---
@@ -426,7 +445,7 @@ Song description.
     db_file = tmp_path / "fs_guard3.sqlite"
     init_db(db_file)
 
-    res = load_culture_dir(culture_dir, db_path=db_file)
+    res = load_culture_dir(culture_dir, db_path=db_file, register_path=reg_file)
     assert res.summary["inserted"] == 1
 
     items = related("Accepted Song", db_path=db_file)["culture_items"]

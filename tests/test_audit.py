@@ -712,6 +712,65 @@ Song description.
     assert "FUTURE OR INVALID DATE" not in good_flags
 
 
+def test_audit_flags_consent_hash_mismatch(tmp_path):
+    """Verify audit flags CONSENT HASH MISMATCH when consent file was modified."""
+    from bhasha_lib.consent import add_consent
+
+    db_file = tmp_path / "audit_fs_mismatch.sqlite"
+    init_db(db_file)
+    dir_path = tmp_path / "archive_folk_songs"
+    dir_path.mkdir()
+
+    consent_file = tmp_path / "doc.pdf"
+    consent_file.write_bytes(b"initial consent bytes")
+
+    reg_file = tmp_path / "register.csv"
+    add_consent(
+        file_path=consent_file,
+        contributor="Field Collector",
+        permission_type="written",
+        date_str="2026-01-01",
+        scope="Public release",
+        register_path=reg_file,
+    )
+
+    # Edit the file so its hash changes
+    consent_file.write_bytes(b"tampered consent bytes")
+
+    (dir_path / "song.md").write_text(
+        f"""---
+category: folk_song
+title: Modified Song
+source: Archive Source Ref
+consent_document: {consent_file.as_posix()}
+contributor: Field Collector
+permission_type: written
+permission_date: 2026-01-01
+---
+Description.
+""",
+        encoding="utf-8",
+    )
+
+    src_id = add_source(
+        title="Archive Source Ref", license="CC-BY-4.0", db_path=db_file
+    )
+    add_culture_item(
+        category="folk_song",
+        title="Modified Song",
+        source_id=src_id,
+        db_path=db_file,
+    )
+
+    res = audit_culture_and_history(
+        db_path=db_file, dir_path=dir_path, register_path=reg_file
+    )
+    rows_by_title = {r["title"]: r for r in res["rows"]}
+    flags = rows_by_title["Modified Song"]["flags"]
+    assert "CONSENT HASH MISMATCH" in flags
+    assert res["summary"]["flag_counts"]["CONSENT HASH MISMATCH"] == 1
+
+
 def test_audit_flags_untracked_data_file(tmp_path):
     """Verify UNTRACKED DATA FILE flags unreferenced non-culture files."""
     db_file = tmp_path / "audit_untracked.sqlite"

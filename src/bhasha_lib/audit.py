@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import os
 import re
 import shutil
 import subprocess
@@ -12,6 +13,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from bhasha_lib.consent import DEFAULT_REGISTER_PATH, verify_consent_document
 from bhasha_lib.culture import parse_culture_markdown
 from bhasha_lib.db import DEFAULT_DB_PATH, get_connection, init_db
 
@@ -423,6 +425,7 @@ def remove_culture_item(
 def audit_culture_and_history(
     db_path: str | Path = DEFAULT_DB_PATH,
     dir_path: str | Path = "data/archive/bodo",
+    register_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Audit culture_items rows against repository markdown files.
 
@@ -436,6 +439,7 @@ def audit_culture_and_history(
     - NEEDS CITATION DETAIL: generic site name without page title or 2nd source
     - DUPLICATE TITLE: same title appears in multiple distinct categories
     - VERIFIED WITHOUT NOTE: confidence is 'verified' without 'verified_by' key
+    - CONSENT HASH MISMATCH: consent document SHA-256 does not match consent register
 
     Never modifies database or files.
     """
@@ -660,6 +664,37 @@ def audit_culture_and_history(
                         ),
                     }
                 )
+            else:
+                # Flag: CONSENT HASH MISMATCH
+                reg_file = register_path
+                if reg_file is None:
+                    env_reg = os.environ.get("BHASHA_CONSENT_REGISTER")
+                    if env_reg:
+                        reg_file = Path(env_reg)
+                    else:
+                        reg_file = DEFAULT_REGISTER_PATH
+
+                if Path(reg_file).is_file():
+                    valid_consent, consent_err = verify_consent_document(
+                        doc_path=str(consent_doc).strip(),
+                        file_context_path=file_path,
+                        register_path=reg_file,
+                        project_root=Path(dir_path) if dir_path else None,
+                    )
+                    if not valid_consent:
+                        row_flags.append("CONSENT HASH MISMATCH")
+                        flagged_problems.append(
+                            {
+                                "flag": "CONSENT HASH MISMATCH",
+                                "row_id": row_id,
+                                "title": title,
+                                "category": cat,
+                                "message": (
+                                    "Folk song consent verification failed: "
+                                    f"{consent_err}"
+                                ),
+                            }
+                        )
 
             # Flag: FUTURE OR INVALID DATE
             parsed_d, is_valid_fmt = parse_permission_date(perm_date)
@@ -925,6 +960,12 @@ def main(argv: list[str] | None = None) -> int:
         default="data/archive/bodo",
         help="Root directory for markdown archive files (default: data/archive/bodo)",
     )
+    parser.add_argument(
+        "--register",
+        type=str,
+        default=None,
+        help="Path to consent register CSV",
+    )
 
     args = parser.parse_args(argv)
 
@@ -937,7 +978,9 @@ def main(argv: list[str] | None = None) -> int:
         print_archive_files(files_data)
         return 0
 
-    report = audit_culture_and_history(db_path=args.db, dir_path=args.dir)
+    report = audit_culture_and_history(
+        db_path=args.db, dir_path=args.dir, register_path=args.register
+    )
     print_audit_report(report)
     return 1 if report.get("problems") else 0
 

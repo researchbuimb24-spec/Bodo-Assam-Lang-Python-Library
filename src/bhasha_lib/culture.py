@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from bhasha_lib.consent import DEFAULT_REGISTER_PATH, verify_consent_document
 from bhasha_lib.db import (
     DEFAULT_DB_PATH,
     get_connection,
@@ -26,6 +29,7 @@ def validate_folk_song_header(
     header: dict[str, Any],
     file_path: Path,
     project_root: Path | None = None,
+    register_path: str | Path | None = None,
 ) -> list[str]:
     """Validate folk song header keys and consent requirements.
 
@@ -34,7 +38,8 @@ def validate_folk_song_header(
     """
     failures: list[str] = []
 
-    # 1. consent_document: must exist on disk (relative to root/cwd/file)
+    # 1. consent_document: must exist on disk and appear in consent
+    # register with matching SHA-256
     consent_doc = header.get("consent_document")
     if not consent_doc or not str(consent_doc).strip():
         failures.append("Missing required 'consent_document' key")
@@ -51,6 +56,23 @@ def validate_folk_song_header(
             failures.append(
                 f"'consent_document' file does not exist on disk: {doc_str}"
             )
+        else:
+            reg_target = register_path
+            if reg_target is None:
+                env_reg = os.environ.get("BHASHA_CONSENT_REGISTER")
+                if env_reg:
+                    reg_target = Path(env_reg)
+                else:
+                    reg_target = DEFAULT_REGISTER_PATH
+
+            is_valid, err_msg = verify_consent_document(
+                doc_path=doc_str,
+                file_context_path=file_path,
+                register_path=reg_target,
+                project_root=root,
+            )
+            if not is_valid:
+                failures.append(err_msg)
 
     # 2. contributor
     contributor = header.get("contributor")
@@ -181,6 +203,7 @@ def reset_confidence(db_path: str | Path = DEFAULT_DB_PATH) -> int:
 def load_culture_dir(
     dir_path: str | Path,
     db_path: str | Path = DEFAULT_DB_PATH,
+    register_path: str | Path | None = None,
 ) -> CultureLoadResult:
     """Read every .md file in the directory and load culture records into DB.
 
@@ -215,7 +238,9 @@ def load_culture_dir(
             p.lower() == "folk_songs" for p in file_path.parts
         )
         if is_folk_song:
-            failures = validate_folk_song_header(header, file_path)
+            failures = validate_folk_song_header(
+                header, file_path, register_path=register_path
+            )
             if failures:
                 print(
                     f"Refused folk song '{file_path.name}': {'; '.join(failures)}"
@@ -236,13 +261,17 @@ def load_culture_dir(
             raise ValueError(
                 f"File '{file_path.name}' is rejected: Missing required 'title'."
             )
-        if not source:
-            raise ValueError(
-                f"File '{file_path.name}' is rejected: Missing required 'source'."
-            )
         if not description:
             raise ValueError(
                 f"File '{file_path.name}' is rejected: Missing description text."
+            )
+        if re.search(r"\bTODO\b", description):
+            raise ValueError(
+                f"File '{file_path.name}' is rejected: Body contains 'TODO'."
+            )
+        if not source:
+            raise ValueError(
+                f"File '{file_path.name}' is rejected: Missing required 'source'."
             )
 
         # Optional timeline and verification metadata
@@ -267,6 +296,67 @@ def load_culture_dir(
         confidence = (
             str(confidence_raw).strip() if confidence_raw else "needs_check"
         )
+
+        verified_on_val: str | None = None
+        if confidence.lower() == "verified":
+            verified_by = str(header.get("verified_by") or "").strip()
+            if not verified_by:
+                raise ValueError(
+                    f"File '{file_path.name}' is rejected: "
+                    "'confidence: verified' requires non-empty 'verified_by'."
+                )
+
+            verified_on_raw = header.get("verified_on")
+            if not verified_on_raw:
+                raise ValueError(
+                    f"File '{file_path.name}' is rejected: "
+                    "'confidence: verified' requires 'verified_on'."
+                )
+
+            v_date: datetime.date | None = None
+            if isinstance(verified_on_raw, datetime.date):
+                v_date = verified_on_raw
+            elif isinstance(verified_on_raw, datetime.datetime):
+                v_date = verified_on_raw.date()
+            elif isinstance(verified_on_raw, str):
+                try:
+                    v_date = datetime.date.fromisoformat(
+                        verified_on_raw.strip()
+                    )
+                except ValueError:
+                    try:
+                        v_date = datetime.datetime.strptime(
+                            verified_on_raw.strip(), "%Y-%m-%d"
+                        ).date()
+                    except ValueError:
+                        v_date = None
+
+            if v_date is None:
+                raise ValueError(
+                    f"File '{file_path.name}' is rejected: "
+                    f"'verified_on' must be a valid date, got '{verified_on_raw}'."
+                )
+
+            today = datetime.date.today()
+            if v_date > today:
+                raise ValueError(
+                    f"File '{file_path.name}' is rejected: "
+                    f"'verified_on' date cannot be in the future ({v_date} > {today})."
+                )
+
+            verified_on_val = v_date.isoformat()
+        else:
+            verified_on_raw = header.get("verified_on")
+            if verified_on_raw:
+                if isinstance(verified_on_raw, (datetime.date, datetime.datetime)):
+                    verified_on_val = verified_on_raw.strftime("%Y-%m-%d")
+                elif isinstance(verified_on_raw, str) and verified_on_raw.strip():
+                    try:
+                        verified_on_val = datetime.date.fromisoformat(
+                            verified_on_raw.strip()
+                        ).isoformat()
+                    except ValueError:
+                        verified_on_val = None
 
         with get_connection(db_path) as conn:
             cursor = conn.cursor()
@@ -311,7 +401,7 @@ def load_culture_dir(
             cursor.execute(
                 """
                 SELECT id, description, region, related_words,
-                       year_start, year_end, confidence, source_id
+                       year_start, year_end, confidence, verified_on, source_id
                 FROM culture_items
                 WHERE title = ? AND category = ?
                 """,
@@ -327,6 +417,7 @@ def load_culture_dir(
                 exist_ys = existing["year_start"]
                 exist_ye = existing["year_end"]
                 exist_conf = existing["confidence"] or "needs_check"
+                exist_vo = existing["verified_on"] or None
                 exist_src = existing["source_id"]
 
                 cur_desc = description or ""
@@ -335,6 +426,7 @@ def load_culture_dir(
                 cur_ys = year_start
                 cur_ye = year_end
                 cur_conf = confidence
+                cur_vo = verified_on_val or None
                 cur_src = source_id
 
                 is_changed = (
@@ -344,6 +436,7 @@ def load_culture_dir(
                     or exist_ys != cur_ys
                     or exist_ye != cur_ye
                     or exist_conf != cur_conf
+                    or exist_vo != cur_vo
                     or exist_src != cur_src
                 )
 
@@ -357,6 +450,7 @@ def load_culture_dir(
                             year_start = ?,
                             year_end = ?,
                             confidence = ?,
+                            verified_on = ?,
                             source_id = ?
                         WHERE id = ?
                         """,
@@ -367,6 +461,7 @@ def load_culture_dir(
                             year_start,
                             year_end,
                             confidence,
+                            verified_on_val,
                             source_id,
                             item_id,
                         ),
@@ -387,9 +482,10 @@ def load_culture_dir(
                         media_path,
                         year_start,
                         year_end,
-                        confidence
+                        confidence,
+                        verified_on
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         category,
@@ -402,6 +498,7 @@ def load_culture_dir(
                         year_start,
                         year_end,
                         confidence,
+                        verified_on_val,
                     ),
                 )
                 if cursor.lastrowid is None:
@@ -446,7 +543,7 @@ def related(
             SELECT
                 id, category, title, description, region,
                 related_words, source_id, media_path,
-                year_start, year_end, confidence
+                year_start, year_end, confidence, verified_on
             FROM culture_items
             WHERE title LIKE ? ESCAPE '\\'
                OR description LIKE ? ESCAPE '\\'
@@ -482,13 +579,19 @@ def main(argv: list[str] | None = None) -> int:
         default=DEFAULT_DB_PATH,
         help=f"Path to SQLite database (default: {DEFAULT_DB_PATH})",
     )
+    parser.add_argument(
+        "--register",
+        type=str,
+        default=None,
+        help="Path to consent register CSV",
+    )
     args = parser.parse_args(argv)
 
     if args.target == "reset-confidence":
         reset_confidence(db_path=args.db)
         return 0
 
-    load_culture_dir(args.target, db_path=args.db)
+    load_culture_dir(args.target, db_path=args.db, register_path=args.register)
     return 0
 
 

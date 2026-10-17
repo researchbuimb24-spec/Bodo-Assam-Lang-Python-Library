@@ -6,6 +6,7 @@ import argparse
 import csv
 import random
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -52,7 +53,7 @@ CONTEXT_2_COL: str = "context_2 (do not edit)"
 def export_for_review(
     db_path: str | Path = DEFAULT_DB_PATH,
     csv_path: str | Path = "data/review_batch_1.csv",
-    limit: int = 500,
+    limit: int | None = 500,
     only_empty: bool = True,
     seed: int = 1,
     source_id: int | None = None,
@@ -60,17 +61,24 @@ def export_for_review(
     min_freq: int = 1,
     order: str = "random",
     exclude_hyphen: bool = False,
+    batch_name: str | None = None,
+    words_file: str | Path | None = None,
+    only_without_occurrences: bool = False,
+    exclude_origin: str | None = None,
+    skip_exported: bool = False,
 ) -> int:
     """Export words needing review into a UTF-8 with BOM CSV template.
 
     Picks words where meaning_hi and meaning_en are both empty.
     Supports filtering by source, minimum frequency, excluding hyphenated words,
+    words file, origin exclusion, occurrence exclusion, skipping already exported words,
     sorting by frequency or repeatable random shuffle, and adding occurrence contexts.
+    Records export batch and words into review_batches and review_batch_words.
 
     Args:
         db_path: Path to the SQLite database.
         csv_path: Destination CSV file path.
-        limit: Maximum number of rows to export (default: 500).
+        limit: Maximum number of rows to export (default: 500, or None).
         only_empty: Only include words with both meanings empty (default: True).
         seed: Random seed for deterministic reproducibility (default: 1).
         source_id: If given, only includes words having an occurrence from this source.
@@ -78,6 +86,11 @@ def export_for_review(
         min_freq: Minimum frequency threshold (default: 1).
         order: Ordering strategy: 'random' (default) or 'freq' (descending).
         exclude_hyphen: If True, skips words containing a hyphen.
+        batch_name: Name of the review batch (required in CLI, fails if exists).
+        words_file: Path to a UTF-8 file with words to export (one per line).
+        only_without_occurrences: Only words that have no rows in occurrences.
+        exclude_origin: Origin to skip (e.g. 'loan').
+        skip_exported: Skip words already recorded in any earlier batch.
 
     Returns:
         Number of word rows exported.
@@ -85,7 +98,24 @@ def export_for_review(
     actual_db_path, actual_csv_path = _resolve_paths(db_path, csv_path)
     init_db(actual_db_path)
 
-    actual_csv_path.parent.mkdir(parents=True, exist_ok=True)
+    clean_batch_name = batch_name.strip() if batch_name is not None else None
+    if clean_batch_name:
+        with get_connection(actual_db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT 1 FROM review_batches WHERE batch_name = ?",
+                (clean_batch_name,),
+            )
+            if cursor.fetchone() is not None:
+                raise ValueError(f"Batch '{clean_batch_name}' already exists.")
+
+    words_file_set: set[str] | None = None
+    if words_file is not None:
+        wf_path = Path(words_file)
+        if not wf_path.is_file():
+            raise FileNotFoundError(f"Words file not found: {wf_path}")
+        with open(wf_path, encoding="utf-8-sig") as f:
+            words_file_set = {line.strip() for line in f if line.strip()}
 
     conditions: list[str] = []
     params: list[Any] = []
@@ -109,6 +139,22 @@ def export_for_review(
         )
         params.append(source_id)
 
+    if only_without_occurrences:
+        conditions.append(
+            "words.word NOT IN (SELECT word FROM occurrences WHERE word IS NOT NULL)"
+        )
+
+    if exclude_origin:
+        conditions.append("(words.origin IS NULL OR LOWER(words.origin) != ?)")
+        params.append(exclude_origin.strip().lower())
+
+    if skip_exported:
+        conditions.append(
+            "words.word NOT IN ("
+            "SELECT word FROM review_batch_words WHERE word IS NOT NULL"
+            ")"
+        )
+
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
     if order.lower() == "freq":
@@ -129,12 +175,18 @@ def export_for_review(
         cursor.execute(query, params)
         candidate_rows = [dict(r) for r in cursor.fetchall()]
 
+    if words_file_set is not None:
+        candidate_rows = [r for r in candidate_rows if r["word"] in words_file_set]
+
     # If random ordering is requested, shuffle with reproducible seed
     if order.lower() != "freq":
         rng = random.Random(seed)
         rng.shuffle(candidate_rows)
 
-    selected_rows = candidate_rows[:limit] if limit is not None else candidate_rows
+    if limit is not None and limit >= 0:
+        selected_rows = candidate_rows[:limit]
+    else:
+        selected_rows = candidate_rows
 
     contexts_map: dict[str, list[str]] = {}
     if with_context and selected_rows:
@@ -169,6 +221,7 @@ def export_for_review(
     if with_context:
         fieldnames.extend([CONTEXT_1_COL, CONTEXT_2_COL])
 
+    actual_csv_path.parent.mkdir(parents=True, exist_ok=True)
     with open(actual_csv_path, mode="w", encoding="utf-8-sig", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
@@ -192,6 +245,27 @@ def export_for_review(
 
             writer.writerow(row_dict)
 
+    if clean_batch_name:
+        now_iso = datetime.now(UTC).isoformat()
+        with get_connection(actual_db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO review_batches (
+                    batch_name, created_at, csv_path, words_count, imported_at
+                ) VALUES (?, ?, ?, ?, NULL)
+                """,
+                (clean_batch_name, now_iso, str(actual_csv_path), len(selected_rows)),
+            )
+            for row in selected_rows:
+                cursor.execute(
+                    """
+                    INSERT INTO review_batch_words (batch_name, word)
+                    VALUES (?, ?)
+                    """,
+                    (clean_batch_name, row["word"]),
+                )
+
     return len(selected_rows)
 
 
@@ -202,6 +276,8 @@ export_meanings_csv = export_for_review
 def import_meanings(
     csv_path: str | Path,
     db_path: str | Path = DEFAULT_DB_PATH,
+    batch_name: str | None = None,
+    dry_run: bool = False,
 ) -> dict[str, int]:
     """Import reviewed meanings from CSV into database with validation.
 
@@ -214,6 +290,9 @@ def import_meanings(
       and differs, print a conflict line and skip it.
     - Never change the word text itself.
     - Set status to 'community' and store verified_by.
+    - If dry_run is True, prints what would be updated/skipped/rejected/conflicting,
+      writes NOTHING to database, and does not set imported_at.
+    - If batch_name is provided and not dry_run, sets imported_at for that batch.
     - Print a summary: updated, skipped, rejected, conflicts.
 
     Returns:
@@ -247,6 +326,11 @@ def import_meanings(
 
             # Skip row if both meanings are empty
             if not meaning_hi and not meaning_en:
+                if dry_run:
+                    print(
+                        f"Line {line_no}: Skipped - Both meanings empty "
+                        f"for word '{word}'."
+                    )
                 skipped += 1
                 continue
 
@@ -306,20 +390,33 @@ def import_meanings(
                 target_en = exist_en if exist_en else meaning_en
                 target_origin = origin if origin else exist_origin
 
-                update_word_meaning(
-                    word=word,
-                    meaning_hi=target_hi,
-                    meaning_en=target_en,
-                    pos=pos,
-                    origin=target_origin,
-                    status="community",
-                    verified_by=verified_by,
-                    dialect=dialect,
-                    db_path=actual_db_path,
-                )
-                updated += 1
+                if dry_run:
+                    print(
+                        f"Line {line_no}: Would update - Word '{word}' "
+                        f"(meaning_hi='{target_hi}', meaning_en='{target_en}', "
+                        f"origin='{target_origin}', status='community', "
+                        f"verified_by='{verified_by}')."
+                    )
+                    updated += 1
+                else:
+                    update_word_meaning(
+                        word=word,
+                        meaning_hi=target_hi,
+                        meaning_en=target_en,
+                        pos=pos,
+                        origin=target_origin,
+                        status="community",
+                        verified_by=verified_by,
+                        dialect=dialect,
+                        db_path=actual_db_path,
+                    )
+                    updated += 1
             else:
-                # Word does not exist in lexicon; skip to preserve lexicon integrity
+                if dry_run:
+                    print(
+                        f"Line {line_no}: Skipped - Word '{word}' "
+                        f"not found in database."
+                    )
                 skipped += 1
 
     summary = {
@@ -332,6 +429,17 @@ def import_meanings(
         f"Summary: {updated} updated, {skipped} skipped, "
         f"{rejected} rejected, {conflicts} conflicts."
     )
+
+    clean_batch_name = batch_name.strip() if batch_name is not None else None
+    if clean_batch_name and not dry_run:
+        now_iso = datetime.now(UTC).isoformat()
+        with get_connection(actual_db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE review_batches SET imported_at = ? WHERE batch_name = ?",
+                (now_iso, clean_batch_name),
+            )
+
     return summary
 
 
@@ -398,8 +506,114 @@ def print_stats(db_path: str | Path = DEFAULT_DB_PATH) -> dict[str, Any]:
     return stats
 
 
+def get_progress_stats(
+    db_path: str | Path = DEFAULT_DB_PATH,
+) -> dict[str, Any]:
+    """Return progress statistics per review batch and overall totals."""
+    init_db(db_path)
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+
+        # Batches
+        cursor.execute(
+            """
+            SELECT batch_name, created_at, csv_path, words_count, imported_at
+            FROM review_batches
+            ORDER BY created_at ASC, batch_name ASC
+            """
+        )
+        batch_rows = cursor.fetchall()
+        batches: list[dict[str, Any]] = []
+        for b in batch_rows:
+            b_name = b["batch_name"]
+            cursor.execute(
+                """
+                SELECT count(DISTINCT rbw.word)
+                FROM review_batch_words rbw
+                JOIN words w ON rbw.word = w.word
+                WHERE rbw.batch_name = ?
+                  AND ((w.meaning_hi IS NOT NULL AND w.meaning_hi != '')
+                    OR (w.meaning_en IS NOT NULL AND w.meaning_en != ''))
+                """,
+                (b_name,),
+            )
+            words_with_meaning = int(cursor.fetchone()[0])
+            batches.append(
+                {
+                    "batch_name": b_name,
+                    "created_at": b["created_at"],
+                    "csv_path": b["csv_path"],
+                    "words_exported": b["words_count"],
+                    "words_with_meaning": words_with_meaning,
+                    "imported_at": b["imported_at"],
+                }
+            )
+
+        # Totals
+        cursor.execute("SELECT count(1) FROM words")
+        total_words = int(cursor.fetchone()[0])
+
+        cursor.execute(
+            """
+            SELECT count(1) FROM words
+            WHERE (meaning_hi IS NOT NULL AND meaning_hi != '')
+               OR (meaning_en IS NOT NULL AND meaning_en != '')
+            """
+        )
+        total_words_with_meaning = int(cursor.fetchone()[0])
+
+        cursor.execute(
+            "SELECT COALESCE(status, 'unverified') as st, count(1) "
+            "FROM words GROUP BY st"
+        )
+        status_counts = {row["st"]: row[1] for row in cursor.fetchall()}
+
+        cursor.execute(
+            "SELECT COALESCE(origin, 'unset') as orig, count(1) "
+            "FROM words GROUP BY orig"
+        )
+        origin_counts = {row["orig"]: row[1] for row in cursor.fetchall()}
+
+    return {
+        "batches": batches,
+        "totals": {
+            "total_words": total_words,
+            "words_with_meaning": total_words_with_meaning,
+            "status_counts": status_counts,
+            "origin_counts": origin_counts,
+        },
+    }
+
+
+def print_progress(db_path: str | Path = DEFAULT_DB_PATH) -> dict[str, Any]:
+    """Print progress per review batch and overall totals to standard output."""
+    stats = get_progress_stats(db_path=db_path)
+    print("Review Batches Progress:")
+    if not stats["batches"]:
+        print("  No review batches found.")
+    else:
+        for b in stats["batches"]:
+            imported_str = b["imported_at"] if b["imported_at"] else "None"
+            print(f"  Batch: {b['batch_name']}")
+            print(f"    Words exported: {b['words_exported']}")
+            print(f"    Words with meaning: {b['words_with_meaning']}")
+            print(f"    Imported at: {imported_str}")
+
+    totals = stats["totals"]
+    print("\nTotals:")
+    print(f"  Words with a meaning: {totals['words_with_meaning']}")
+    print("  Count by status:")
+    for st, count in sorted(totals["status_counts"].items()):
+        print(f"    - {st}: {count}")
+    print("  Count by origin:")
+    for orig, count in sorted(totals["origin_counts"].items()):
+        print(f"    - {orig}: {count}")
+
+    return stats
+
+
 def main(argv: list[str] | None = None) -> int:
-    """CLI entry point for export, import, and stats."""
+    """CLI entry point for export, import, progress, and stats."""
     parser = argparse.ArgumentParser(
         description="Manage lexical meanings review workflow."
     )
@@ -408,6 +622,36 @@ def main(argv: list[str] | None = None) -> int:
     # export
     p_export = subparsers.add_parser("export", help="Export words for community review")
     p_export.add_argument("out_csv", type=str, help="Destination CSV file path")
+    p_export.add_argument(
+        "--batch-name",
+        type=str,
+        required=True,
+        help="Batch name (required when writing a CSV; fails if exists)",
+    )
+    p_export.add_argument(
+        "--words-file",
+        type=str,
+        default=None,
+        help="Path to UTF-8 file with words to export (one per line)",
+    )
+    p_export.add_argument(
+        "--only-without-occurrences",
+        action="store_true",
+        default=False,
+        help="Only words that have no rows in occurrences",
+    )
+    p_export.add_argument(
+        "--exclude-origin",
+        type=str,
+        default=None,
+        help="Skip words whose origin matches this value (e.g. loan)",
+    )
+    p_export.add_argument(
+        "--skip-exported",
+        action="store_true",
+        default=False,
+        help="Skip words already in any earlier batch",
+    )
     p_export.add_argument(
         "--limit",
         type=int,
@@ -469,6 +713,29 @@ def main(argv: list[str] | None = None) -> int:
         default=DEFAULT_DB_PATH,
         help=f"Path to SQLite database (default: {DEFAULT_DB_PATH})",
     )
+    p_import.add_argument(
+        "--batch-name",
+        type=str,
+        default=None,
+        help="Batch name to set imported_at",
+    )
+    p_import.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="Print what would be updated/skipped/rejected/conflicting without writing",
+    )
+
+    # progress
+    p_progress = subparsers.add_parser(
+        "progress", help="Display review batches progress and totals"
+    )
+    p_progress.add_argument(
+        "--db",
+        type=str,
+        default=DEFAULT_DB_PATH,
+        help=f"Path to SQLite database (default: {DEFAULT_DB_PATH})",
+    )
 
     # stats
     p_stats = subparsers.add_parser("stats", help="Display lexicon meanings statistics")
@@ -482,22 +749,40 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "export":
-        exported = export_for_review(
-            db_path=args.db,
-            csv_path=args.out_csv,
-            limit=args.limit,
-            seed=args.seed,
-            source_id=args.source_id,
-            with_context=args.with_context,
-            min_freq=args.min_freq,
-            order=args.order,
-            exclude_hyphen=args.exclude_hyphen,
-        )
+        try:
+            exported = export_for_review(
+                db_path=args.db,
+                csv_path=args.out_csv,
+                limit=args.limit,
+                seed=args.seed,
+                source_id=args.source_id,
+                with_context=args.with_context,
+                min_freq=args.min_freq,
+                order=args.order,
+                exclude_hyphen=args.exclude_hyphen,
+                batch_name=args.batch_name,
+                words_file=args.words_file,
+                only_without_occurrences=args.only_without_occurrences,
+                exclude_origin=args.exclude_origin,
+                skip_exported=args.skip_exported,
+            )
+        except ValueError as err:
+            print(f"Error: {err}", file=sys.stderr)
+            return 1
         print(f"Exported {exported} words for review to '{args.out_csv}'.")
         return 0
 
     if args.command == "import":
-        import_meanings(csv_path=args.in_csv, db_path=args.db)
+        import_meanings(
+            csv_path=args.in_csv,
+            db_path=args.db,
+            batch_name=args.batch_name,
+            dry_run=args.dry_run,
+        )
+        return 0
+
+    if args.command == "progress":
+        print_progress(db_path=args.db)
         return 0
 
     if args.command == "stats":

@@ -11,6 +11,17 @@ data/archive/*/books/
 data/archive/*/folk_songs/
 data/archive/*/datasets/
 
+# Consents and sensitive documentation
+consents/
+
+# Audio and media recordings
+*.wav
+*.mp3
+*.m4a
+*.ogg
+*.flac
+*.mp4
+
 # Keep culture, history, and book documentation files tracked
 !data/archive/*/culture/*.md
 !data/archive/*/history/*.md

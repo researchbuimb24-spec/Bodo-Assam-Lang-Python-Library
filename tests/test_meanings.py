@@ -1,5 +1,7 @@
 import csv
 
+import pytest
+
 from bhasha_lib.db import (
     add_occurrence,
     add_word,
@@ -13,8 +15,10 @@ from bhasha_lib.meanings import (
     CSV_FIELDNAMES,
     export_for_review,
     get_meanings_stats,
+    get_progress_stats,
     import_meanings,
     main,
+    print_progress,
     print_stats,
 )
 
@@ -260,7 +264,21 @@ def test_stats_and_cli(tmp_path):
 
     # CLI export
     csv_file = tmp_path / "cli_out.csv"
-    assert main(["export", str(csv_file), "--limit", "10", "--db", str(db_file)]) == 0
+    assert (
+        main(
+            [
+                "export",
+                str(csv_file),
+                "--batch-name",
+                "cli_batch",
+                "--limit",
+                "10",
+                "--db",
+                str(db_file),
+            ]
+        )
+        == 0
+    )
     assert csv_file.is_file()
 
     # CLI import
@@ -443,3 +461,309 @@ def test_import_with_context_columns_and_old_layout(tmp_path):
     assert res_old["updated"] == 1
     w_old = search_word("old_layout_word", db_path=db_file)
     assert w_old["meaning_hi"] == "पुराना"
+
+
+def test_batch_name_must_be_unique(tmp_path):
+    """Batch name must be unique; fails if the name already exists."""
+    db_file = tmp_path / "batch_unique.sqlite"
+    init_db(db_file)
+
+    add_word(word="w1", db_path=db_file)
+    add_word(word="w2", db_path=db_file)
+
+    csv_1 = tmp_path / "batch_1.csv"
+    count = export_for_review(db_file, csv_1, batch_name="batch_alpha")
+    assert count == 2
+    assert csv_1.is_file()
+
+    # Verify review_batches and review_batch_words records
+    with get_connection(db_file) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM review_batches WHERE batch_name = 'batch_alpha'")
+        row = cursor.fetchone()
+        assert row is not None
+        assert row["words_count"] == 2
+        assert row["imported_at"] is None
+
+        cursor.execute(
+            "SELECT word FROM review_batch_words "
+            "WHERE batch_name = 'batch_alpha' ORDER BY word"
+        )
+        words = [r["word"] for r in cursor.fetchall()]
+        assert words == ["w1", "w2"]
+
+    # Re-exporting with identical batch name must raise ValueError
+    csv_2 = tmp_path / "batch_2.csv"
+    with pytest.raises(ValueError, match="already exists"):
+        export_for_review(db_file, csv_2, batch_name="batch_alpha")
+
+    # CSV_2 should not have been created
+    assert not csv_2.exists()
+
+    # CLI export with duplicate batch name exits with non-zero (1)
+    cli_code = main(
+        [
+            "export",
+            str(csv_2),
+            "--batch-name",
+            "batch_alpha",
+            "--db",
+            str(db_file),
+        ]
+    )
+    assert cli_code == 1
+
+
+def test_words_file_exports_only_matching_words(tmp_path):
+    """--words-file exports only matching words present in the file."""
+    db_file = tmp_path / "words_file_test.sqlite"
+    init_db(db_file)
+
+    add_word(word="w1", db_path=db_file)
+    add_word(word="w2", db_path=db_file)
+    add_word(word="w3", db_path=db_file)
+    add_word(word="w4", db_path=db_file)
+
+    words_file = tmp_path / "keep.txt"
+    words_file.write_text("w2\nw4\nw999\n", encoding="utf-8")
+
+    csv_out = tmp_path / "words_file_out.csv"
+    count = export_for_review(
+        db_file,
+        csv_out,
+        batch_name="words_file_batch",
+        words_file=words_file,
+    )
+    assert count == 2
+
+    with open(csv_out, encoding="utf-8-sig", newline="") as f:
+        rows = list(csv.DictReader(f))
+    exported = {r["word"] for r in rows}
+    assert exported == {"w2", "w4"}
+
+
+def test_skip_exported_skips_earlier_batches(tmp_path):
+    """--skip-exported skips words already recorded in any earlier batch."""
+    db_file = tmp_path / "skip_exp.sqlite"
+    init_db(db_file)
+
+    add_word(word="w1", freq=10, db_path=db_file)
+    add_word(word="w2", freq=8, db_path=db_file)
+    add_word(word="w3", freq=6, db_path=db_file)
+    add_word(word="w4", freq=4, db_path=db_file)
+
+    # Batch 1 exports w1 and w2 (limit 2, order freq)
+    csv_1 = tmp_path / "b1.csv"
+    c1 = export_for_review(
+        db_file,
+        csv_1,
+        batch_name="batch_1",
+        limit=2,
+        order="freq",
+    )
+    assert c1 == 2
+
+    # Batch 2 with skip_exported=True must skip w1 and w2
+    csv_2 = tmp_path / "b2.csv"
+    c2 = export_for_review(
+        db_file,
+        csv_2,
+        batch_name="batch_2",
+        skip_exported=True,
+        order="freq",
+    )
+    assert c2 == 2
+
+    with open(csv_2, encoding="utf-8-sig", newline="") as f:
+        rows_b2 = list(csv.DictReader(f))
+    assert [r["word"] for r in rows_b2] == ["w3", "w4"]
+
+
+def test_only_without_occurrences_and_exclude_origin(tmp_path):
+    """Verify --only-without-occurrences and --exclude-origin options."""
+    db_file = tmp_path / "filters.sqlite"
+    init_db(db_file)
+
+    add_word(word="has_occ", origin="bodo", db_path=db_file)
+    add_occurrence(
+        word="has_occ",
+        source_id=1,
+        line_no=1,
+        context="ctx",
+        db_path=db_file,
+    )
+
+    add_word(word="no_occ_loan", origin="loan", db_path=db_file)
+    add_word(word="no_occ_bodo", origin="bodo", db_path=db_file)
+
+    csv_out = tmp_path / "filtered.csv"
+    count = export_for_review(
+        db_file,
+        csv_out,
+        batch_name="filter_batch",
+        only_without_occurrences=True,
+        exclude_origin="loan",
+    )
+    assert count == 1
+
+    with open(csv_out, encoding="utf-8-sig", newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert len(rows) == 1
+    assert rows[0]["word"] == "no_occ_bodo"
+
+
+def test_import_dry_run_changes_nothing(tmp_path, capsys):
+    """--dry-run prints changes but writes NOTHING to database."""
+    db_file = tmp_path / "dry_run.sqlite"
+    init_db(db_file)
+
+    add_word(word="word_dry", roman="wd", db_path=db_file)
+    # Create batch
+    csv_exp = tmp_path / "exp.csv"
+    export_for_review(db_file, csv_exp, batch_name="dry_batch")
+
+    # Prepare review CSV with valid meaning
+    csv_in = tmp_path / "dry_in.csv"
+    with open(csv_in, mode="w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=CSV_FIELDNAMES)
+        writer.writeheader()
+        writer.writerow(
+            {
+                "word": "word_dry",
+                "meaning_hi": "सूखा",
+                "meaning_en": "dry",
+                "origin": "bodo",
+                "verified_by": "Tester",
+            }
+        )
+        writer.writerow(
+            {
+                "word": "empty_meanings_word",
+                "meaning_hi": "",
+                "meaning_en": "",
+                "verified_by": "",
+            }
+        )
+        writer.writerow(
+            {
+                "word": "rejected_word",
+                "meaning_hi": "खारिज",
+                "verified_by": "",  # Missing verified_by -> rejected
+            }
+        )
+
+    # 1. Run with dry_run=True
+    res_dry = import_meanings(
+        csv_in,
+        db_file,
+        batch_name="dry_batch",
+        dry_run=True,
+    )
+    assert res_dry["updated"] == 1
+    assert res_dry["skipped"] == 1
+    assert res_dry["rejected"] == 1
+
+    # Verify that database was NOT modified at all
+    w = search_word("word_dry", db_path=db_file)
+    assert w["meaning_hi"] is None
+    assert w["status"] == "unverified"
+
+    with get_connection(db_file) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT imported_at FROM review_batches WHERE batch_name = 'dry_batch'"
+        )
+        row = cursor.fetchone()
+        assert row["imported_at"] is None
+
+    # Check output prints
+    out = capsys.readouterr().out
+    assert "Would update" in out
+    assert "Rejected" in out
+    assert "Summary: 1 updated, 1 skipped, 1 rejected, 0 conflicts." in out
+
+    # 2. Run without dry_run (normal import)
+    res_real = import_meanings(
+        csv_in,
+        db_file,
+        batch_name="dry_batch",
+        dry_run=False,
+    )
+    assert res_real["updated"] == 1
+
+    w_after = search_word("word_dry", db_path=db_file)
+    assert w_after["meaning_hi"] == "सूखा"
+    assert w_after["status"] == "community"
+
+    with get_connection(db_file) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT imported_at FROM review_batches WHERE batch_name = 'dry_batch'"
+        )
+        row = cursor.fetchone()
+        assert row["imported_at"] is not None
+
+
+def test_progress_counts_are_right(tmp_path, capsys):
+    """progress command reports accurate batch counts and overall totals."""
+    db_file = tmp_path / "progress.sqlite"
+    init_db(db_file)
+
+    add_word(word="w1", origin="bodo", db_path=db_file)
+    add_word(word="w2", origin="loan", db_path=db_file)
+    add_word(word="w3", db_path=db_file)
+
+    # Batch 1
+    csv_1 = tmp_path / "batch1.csv"
+    export_for_review(db_file, csv_1, batch_name="batch_1")
+
+    # Check progress before import
+    stats1 = get_progress_stats(db_file)
+    assert len(stats1["batches"]) == 1
+    assert stats1["batches"][0]["batch_name"] == "batch_1"
+    assert stats1["batches"][0]["words_exported"] == 3
+    assert stats1["batches"][0]["words_with_meaning"] == 0
+    assert stats1["batches"][0]["imported_at"] is None
+    assert stats1["totals"]["words_with_meaning"] == 0
+    assert stats1["totals"]["status_counts"]["unverified"] == 3
+
+    # Import meaning for w1
+    csv_done = tmp_path / "b1_done.csv"
+    with open(csv_done, mode="w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=CSV_FIELDNAMES)
+        writer.writeheader()
+        writer.writerow(
+            {
+                "word": "w1",
+                "meaning_hi": "अर्थ1",
+                "meaning_en": "meaning1",
+                "origin": "bodo",
+                "verified_by": "Dr. Brahma",
+            }
+        )
+
+    import_meanings(csv_done, db_file, batch_name="batch_1")
+
+    # Check progress after import
+    stats2 = get_progress_stats(db_file)
+    assert stats2["batches"][0]["words_with_meaning"] == 1
+    assert stats2["batches"][0]["imported_at"] is not None
+    assert stats2["totals"]["words_with_meaning"] == 1
+    assert stats2["totals"]["status_counts"]["community"] == 1
+    assert stats2["totals"]["status_counts"]["unverified"] == 2
+    assert stats2["totals"]["origin_counts"]["bodo"] == 1
+    assert stats2["totals"]["origin_counts"]["loan"] == 1
+    assert stats2["totals"]["origin_counts"]["unset"] == 1
+
+    # Verify print_progress and CLI
+    print_progress(db_file)
+    out = capsys.readouterr().out
+    assert "Batch: batch_1" in out
+    assert "Words exported: 3" in out
+    assert "Words with meaning: 1" in out
+    assert "Words with a meaning: 1" in out
+
+    # CLI progress command
+    cli_code = main(["progress", "--db", str(db_file)])
+    assert cli_code == 0
+

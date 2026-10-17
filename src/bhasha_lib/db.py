@@ -59,7 +59,21 @@ CREATE TABLE IF NOT EXISTS culture_items (
     year_start INTEGER,
     year_end INTEGER,
     confidence TEXT DEFAULT 'needs_check',
+    verified_on TEXT,
     FOREIGN KEY (source_id) REFERENCES sources(id)
+);
+
+CREATE TABLE IF NOT EXISTS review_batches (
+    batch_name TEXT PRIMARY KEY,
+    created_at TEXT,
+    csv_path TEXT,
+    words_count INTEGER,
+    imported_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS review_batch_words (
+    batch_name TEXT,
+    word TEXT
 );
 """
 
@@ -121,6 +135,8 @@ def init_db(path: str | Path = DEFAULT_DB_PATH) -> Path:
                 "ALTER TABLE culture_items "
                 "ADD COLUMN confidence TEXT DEFAULT 'needs_check'"
             )
+        if "verified_on" not in culture_cols:
+            cursor.execute("ALTER TABLE culture_items ADD COLUMN verified_on TEXT")
 
         # Safe migration: set confidence = 'needs_check'
         # for rows where confidence IS NULL
@@ -333,6 +349,7 @@ def add_culture_item(
     year_start: int | None = None,
     year_end: int | None = None,
     confidence: str | None = None,
+    verified_on: str | None = None,
     db_path: str | Path = DEFAULT_DB_PATH,
 ) -> int:
     """Insert a cultural or historical metadata item record."""
@@ -350,9 +367,10 @@ def add_culture_item(
                 media_path,
                 year_start,
                 year_end,
-                confidence
+                confidence,
+                verified_on
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 category,
@@ -365,6 +383,7 @@ def add_culture_item(
                 year_start,
                 year_end,
                 confidence if confidence and confidence.strip() else "needs_check",
+                verified_on if verified_on and verified_on.strip() else None,
             ),
         )
         if cursor.lastrowid is None:
